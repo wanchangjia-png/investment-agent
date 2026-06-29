@@ -743,6 +743,22 @@ async function loadBreakeven() {
                         }
                         html += `</tbody></table></div>`;
                     }
+
+                    // AI 加仓分析按钮
+                    const sectorMap = {
+                        "科达利": "新能源车（锂电池结构件）",
+                        "三花智控": "新能源车（热管理）",
+                        "拓普集团": "新能源车（底盘系统）",
+                        "天齐锂业": "新能源车（上游锂矿）",
+                        "立讯精密": "消费电子/科技",
+                        "五粮液": "白酒/消费",
+                        "元隆雅图": "文化传媒/促销品",
+                    };
+                    const aiResultId = "aiResult-" + s.name;
+                    html += `<div style="margin-top:8px;text-align:center;">
+                        <button class="btn btn-sm btn-green" onclick="loadAiAddAdvice('${s.name}','${sectorMap[s.name]||'其他'}',${s.qty},${s.cost},${s.price},${rec.cash_available},'${aiResultId}',this)">🤖 AI 加仓分析</button>
+                    </div>
+                    <div id="${aiResultId}" style="margin-top:6px;"></div>`;
                 }
                 html += `</div></div>`;
             } else if (s.pnl >= 0) {
@@ -755,6 +771,59 @@ async function loadBreakeven() {
     } catch(e) {
         container.innerHTML = `<div class="empty-state">⚠️ 加载失败</div>`;
     }
+}
+
+// ============ AI 加仓分析 ============
+async function loadAiAddAdvice(name, sector, qty, cost, price, cash, resultId, btn) {
+    const resultDiv = document.getElementById(resultId);
+    if (!resultDiv) return;
+
+    btn.disabled = true;
+    btn.textContent = '🤖 AI 分析中...';
+    resultDiv.innerHTML = '<div style="text-align:center;padding:8px;"><span class="spinner"></span> 搜索市场消息并分析...</div>';
+
+    try {
+        const res = await fetch("/api/add-position-advice", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ name, sector, qty, cost, price, cash })
+        });
+        const data = await res.json();
+
+        if (data.error) {
+            resultDiv.innerHTML = `<div style="padding:8px 10px;background:#fff0f0;border-radius:6px;font-size:12px;color:#CC0000;">⚠️ ${data.error}</div>`;
+            btn.disabled = false;
+            btn.textContent = '🤖 AI 加仓分析';
+            return;
+        }
+
+        const addText = data.should_add ? '✅ 建议加仓' : '⏸️ 暂不加仓';
+        const colorClass = data.should_add ? '#e8f5e9' : '#fff8e1';
+        const borderColor = data.should_add ? '#4CAF50' : '#FFC000';
+        const textColor = data.should_add ? '#2e7d32' : '#f57f17';
+
+        let lotsText = '';
+        if (data.suggested_lots > 0) {
+            const cashNeeded = price * data.suggested_lots * 100;
+            lotsText = `<span>建议加 <b>${data.suggested_lots}手</b> (需 ${cashNeeded.toLocaleString()}元)</span>`;
+        }
+
+        resultDiv.innerHTML = `<div style="padding:10px 12px;background:${colorClass};border-radius:8px;border-left:4px solid ${borderColor};font-size:13px;">
+            <div style="font-weight:600;color:${textColor};margin-bottom:4px;">${addText} · ${data.timing || ''}</div>
+            <div style="color:#555;font-size:12px;margin-bottom:4px;">${data.reason || ''}</div>
+            <div style="display:flex;gap:12px;font-size:12px;color:#555;flex-wrap:wrap;">
+                ${data.suggested_lots !== undefined ? lotsText : ''}
+                <span>板块: <b>${sector}</b></span>
+            </div>
+            ${data.risk_tip ? `<div style="margin-top:4px;color:#f44336;font-size:11px;">⚠️ ${data.risk_tip}</div>` : ''}
+            <div style="margin-top:4px;font-size:10px;color:#bbb;">基于最新市场消息分析</div>
+        </div>`;
+    } catch(e) {
+        resultDiv.innerHTML = `<div style="padding:8px 10px;background:#fff0f0;border-radius:6px;font-size:12px;color:#CC0000;">⚠️ 请求失败: ${e.message}</div>`;
+    }
+
+    btn.disabled = false;
+    btn.textContent = '🤖 AI 加仓分析';
 }
 
 // ============ 工具 ============

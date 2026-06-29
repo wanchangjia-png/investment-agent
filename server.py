@@ -389,6 +389,97 @@ def api_breakeven():
     return {"stocks": agent.breakeven_analysis(holdings, cash)}
 
 
+def api_add_position_advice(data):
+    """AI 分析某只股票是否应该加仓，基于市场消息和行情"""
+    stock_name = data.get("name", "")
+    sector = data.get("sector", "")
+    qty = data.get("qty", 0)
+    cost_price = data.get("cost", 0)
+    current_price = data.get("price", 0)
+    cash = data.get("cash", 0)
+
+    api_key = LLM_CONFIG["api_key"]
+    if not api_key:
+        return {"error": "未配置 API Key，请在设置页面填写"}
+
+    provider = LLM_CONFIG["provider"]
+    model = LLM_CONFIG["model"]
+    endpoint = LLM_ENDPOINTS.get(provider, LLM_ENDPOINTS["deepseek"])
+
+    # 搜索股票 + 板块消息
+    search_queries = [
+        f"{stock_name} 股票 最新消息 {datetime.now().strftime('%Y-%m')}",
+        f"{sector} 板块 最新行情 分析",
+    ]
+    news_items = []
+    for q in search_queries:
+        results = web_search(q, max_results=4)
+        for r in results:
+            news_items.append(f"- [{r['title']}] {r['snippet']}")
+
+    search_context = "\n".join(news_items[:8]) if news_items else "未搜索到相关消息"
+
+    rise_needed = (cost_price / current_price - 1) * 100 if current_price > 0 else 0
+
+    prompt = f"""你是专业的A股投资顾问。请分析以下持仓是否应该加仓。
+
+## 持仓信息
+- 股票：{stock_name}
+- 所属板块：{sector}
+- 持有数量：{qty} 股
+- 成本均价：{cost_price} 元
+- 当前价格：{current_price} 元
+- 需涨 {rise_needed:.1f}% 才能回本
+- 可用现金：{cash:,.0f} 元
+
+## 最新市场消息
+{search_context}
+
+## 任务
+基于以上持仓数据和最新的市场消息、板块行情，给出加仓建议。
+以 JSON 格式输出（不要其他文字）：
+{{{{
+  "should_add": true/false,
+  "timing": "立即加仓/分批次加仓/观望等回调/不建议加仓",
+  "suggested_lots": 建议几手（0表示不加，1手=100股），
+  "reason": "判断理由（结合市场消息具体说明）",
+  "risk_tip": "风险提示"
+}}}}"""
+
+    messages = [
+        {"role": "system", "content": "你是严谨的A股投资顾问，总是基于最新市场信息做判断。输出纯 JSON，不要任何其他文字。"},
+        {"role": "user", "content": prompt},
+    ]
+
+    req_body = json.dumps({
+        "model": model,
+        "messages": messages,
+        "stream": False,
+        "max_tokens": 1024,
+        "temperature": 0.3,
+    }).encode("utf-8")
+
+    try:
+        req = urllib.request.Request(
+            endpoint, data=req_body,
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {api_key}"},
+            method="POST",
+        )
+        resp = urllib.request.urlopen(req, timeout=60)
+        result = json.loads(resp.read().decode("utf-8"))
+        content = result["choices"][0]["message"]["content"]
+
+        # 提取 JSON
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        advice = json.loads(json_match.group()) if json_match else json.loads(content)
+        advice["stock_name"] = stock_name
+        advice["sector"] = sector
+        return advice
+    except Exception as e:
+        return {"error": f"AI 分析失败: {str(e)}", "stock_name": stock_name}
+
+
 # ============ HTTP 服务器 ============
 
 class PortfolioHandler(BaseHTTPRequestHandler):
@@ -494,6 +585,13 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                 LLM_CONFIG["model"] = value
                 save_config_sheet("model", value)
             self._send_json({"success": True})
+
+        elif self.path == "/api/add-position-advice":
+            try:
+                result = api_add_position_advice(data)
+                self._send_json(result)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
 
         else:
             self._send_json({"error": "not found"}, 404)
