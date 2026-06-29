@@ -366,6 +366,19 @@ tr:hover { background: #f8f9ff; }
     </div>
 </div>
 
+<!-- 密码弹窗 -->
+<div class="modal-overlay" id="pwdModal" style="z-index:2000;">
+    <div class="modal" style="width:320px;max-width:85vw;padding:24px;">
+        <h2 style="font-size:16px;margin-bottom:12px;">🔒 请输入编辑密码</h2>
+        <input type="password" id="pwdInput" style="width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:8px;font-size:18px;text-align:center;outline:none;font-family:inherit;" placeholder="请输入密码" onkeydown="if(event.key==='Enter') submitPwd()">
+        <div id="pwdError" style="color:#CC0000;font-size:13px;margin-top:6px;display:none;">密码错误，请重试</div>
+        <div class="modal-actions" style="margin-top:14px;">
+            <button class="btn btn-outline" onclick="cancelPwd()">取消</button>
+            <button class="btn btn-primary" onclick="submitPwd()">确认</button>
+        </div>
+    </div>
+</div>
+
 <script>
 // ============ 全局状态 ============
 let state = { data: null };
@@ -809,13 +822,32 @@ let editHoldingsUnlocked = false;
 
 function showEditHoldings() {
     if (!editHoldingsUnlocked) {
-        const pwd = prompt("请输入编辑密码：");
-        if (pwd !== "9804") {
-            alert("密码错误！");
-            return;
-        }
-        editHoldingsUnlocked = true;
+        document.getElementById("pwdModal").classList.add("show");
+        document.getElementById("pwdInput").value = "";
+        document.getElementById("pwdError").style.display = "none";
+        setTimeout(() => document.getElementById("pwdInput").focus(), 100);
+        return;
     }
+    openEditModal();
+}
+
+function submitPwd() {
+    const pwd = document.getElementById("pwdInput").value;
+    if (String(pwd).trim() === "9804") {
+        document.getElementById("pwdModal").classList.remove("show");
+        editHoldingsUnlocked = true;
+        openEditModal();
+    } else {
+        document.getElementById("pwdError").style.display = "block";
+        document.getElementById("pwdInput").focus();
+    }
+}
+
+function cancelPwd() {
+    document.getElementById("pwdModal").classList.remove("show");
+}
+
+function openEditModal() {
     const modal = document.getElementById("editHoldingsModal");
     modal.classList.add("show");
     // 从已有数据加载
