@@ -657,9 +657,6 @@ def breakeven_analysis(holdings, cash=0):
         # 还需涨多少才能回本
         rise_needed = (cost / price - 1) * 100 if price > 0 else 0
 
-        # 当前价折价深度（成本价比现价低多少）
-        discount_depth = round((cost - price) / cost * 100, 1) if cost > 0 else 0
-
         # 按日涨幅预估回本时间（交易日，月均约22天）
         scenarios = {}
         for label, desc, daily_rise in [
@@ -670,82 +667,6 @@ def breakeven_analysis(holdings, cash=0):
             if daily_rise > 0 and rise_needed > 0:
                 days = round(rise_needed / daily_rise)
                 scenarios[label] = {"label": desc, "days": days}
-
-        # 多档加仓分析：1手 / 2手 / 3手
-        tiers = []
-        for lots in [1, 2, 3]:
-            add_qty = lots * 100
-            new_qty = qty + add_qty
-            new_total_cost = round(total_cost + price * add_qty, 2)
-            new_avg_cost = round(new_total_cost / new_qty, 2)
-            new_rise_needed = (new_avg_cost / price - 1) * 100 if price > 0 else 0
-            cost_reduction = round(cost - new_avg_cost, 2)
-            total_add_cost = round(price * add_qty, 2)
-
-            # 加仓后回本时间
-            tier_scenarios = {}
-            for label, daily_rise in [("optimistic", 5 / 22), ("moderate", 3 / 22), ("conservative", 1 / 22)]:
-                if daily_rise > 0 and new_rise_needed > 0:
-                    days_new = round(new_rise_needed / daily_rise)
-                    old_days = scenarios.get(label, {}).get("days", 0)
-                    tier_scenarios[label] = {"days": days_new, "saved": old_days - days_new if old_days > 0 else 0}
-
-            tiers.append({
-                "lots": lots,
-                "add_qty": add_qty,
-                "add_cost": total_add_cost,
-                "new_avg_cost": new_avg_cost,
-                "cost_reduction": cost_reduction,
-                "new_rise_needed": round(new_rise_needed, 1),
-                "scenarios": tier_scenarios,
-            })
-
-        # 推荐判断
-        should_add = False
-        timing = ""
-        reason = ""
-        best_lots = 0
-
-        if discount_depth >= 15 and cash >= price * 100:
-            should_add = True
-            best_lots = min(3, int(cash / (price * 100)))
-            if best_lots >= 3:
-                timing = "可立即分批次加仓"
-                reason = f"折价{discount_depth}%较深，建议分3批（每批1手），每跌3-5%加一次，摊低成本"
-            elif best_lots >= 2:
-                timing = "建议立即加仓1-2手"
-                reason = f"折价{discount_depth}%较深，资金允许建议加2手，保留部分现金以备继续下跌"
-            else:
-                timing = "可加1手"
-                reason = f"折价{discount_depth}%，资金有限建议先加1手"
-        elif discount_depth >= 8 and cash >= price * 100:
-            should_add = True
-            best_lots = 1
-            timing = "可适度加仓"
-            reason = f"折价{discount_depth}%，加1手可有效降低成本，若继续下跌5%以上再加第2手"
-        elif discount_depth >= 5:
-            should_add = False
-            timing = "观望，等更深的回调"
-            reason = f"折价仅{discount_depth}%，加仓效果有限，建议等折价超过10%后再考虑"
-        else:
-            should_add = False
-            timing = "不建议加仓"
-            reason = "当前价接近成本价，加仓降低成本效果很小"
-
-        # 加仓所需资金上限建议
-        total_add_cost_best = round(price * 100 * best_lots, 2) if best_lots > 0 else 0
-        cash_ok = cash >= total_add_cost_best if total_add_cost_best > 0 else False
-
-        recommendation = {
-            "should_add": should_add,
-            "timing": timing,
-            "reason": reason,
-            "best_lots": best_lots,
-            "discount_depth": discount_depth,
-            "cash_available": round(cash, 2),
-            "cash_needed": total_add_cost_best,
-            "cash_sufficient": cash_ok,
-        }
 
         results.append({
             "name": h["名称"],
@@ -759,10 +680,8 @@ def breakeven_analysis(holdings, cash=0):
             "return_pct": round(return_pct, 2),
             "be_progress": be_progress,
             "rise_needed": round(rise_needed, 1),
-            "discount_depth": discount_depth,
             "scenarios": scenarios,
-            "tiers": tiers,
-            "recommendation": recommendation,
+            "recommendation": {"cash_available": round(cash, 2)},
         })
     return results
 
