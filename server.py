@@ -1,0 +1,528 @@
+#!/usr/bin/env python3
+"""
+投资追踪 Agent - Web 服务器
+启动后浏览器打开 http://localhost:5000 即可使用
+
+支持对话 AI（DeepSeek / OpenAI），联网搜索。
+"""
+import json
+import os
+import sys
+import re
+import urllib.request
+import urllib.parse
+from datetime import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
+
+# 确保能找到同目录模块
+sys.path.insert(0, str(Path(__file__).parent))
+import portfolio_agent as agent
+
+HOST = os.environ.get("HOST", "0.0.0.0")
+PORT = int(os.environ.get("PORT", os.environ.get("RAILWAY_PORT", 5050)))
+DATA_DIR = Path(__file__).parent
+HTML_PATH = DATA_DIR / "webapp.html"
+
+# ============ LLM 配置 ============
+# 通过环境变量设置:
+#   LLM_PROVIDER=deepseek|openai
+#   LLM_API_KEY=sk-xxxxx
+#   LLM_MODEL=deepseek-chat|gpt-4o
+# 也可以在网页 Agent 的设置页面配置
+
+LLM_CONFIG = {
+    "provider": os.environ.get("LLM_PROVIDER", "deepseek"),
+    "api_key": os.environ.get("LLM_API_KEY", ""),
+    "model": os.environ.get("LLM_MODEL", "deepseek-chat"),
+}
+
+LLM_ENDPOINTS = {
+    "deepseek": "https://api.deepseek.com/v1/chat/completions",
+    "openai": "https://api.openai.com/v1/chat/completions",
+}
+
+
+def _read_config_sheet():
+    """从 Excel 配置表读取 LLM 设置"""
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(agent.EXCEL_PATH)
+        if "配置" in wb.sheetnames:
+            ws = wb["配置"]
+            cfg = {}
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                if row[0] and row[1]:
+                    cfg[str(row[0]).strip()] = str(row[1]).strip()
+            wb.close()
+            # 如果 Excel 里有 API Key，覆盖环境变量
+            if "api_key" in cfg and cfg["api_key"]:
+                LLM_CONFIG["api_key"] = cfg["api_key"]
+            if "provider" in cfg and cfg["provider"]:
+                LLM_CONFIG["provider"] = cfg["provider"]
+            if "model" in cfg and cfg["model"]:
+                LLM_CONFIG["model"] = cfg["model"]
+    except Exception:
+        pass
+
+
+def save_config_sheet(key, value):
+    """保存配置到 Excel 配置表"""
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(agent.EXCEL_PATH)
+        if "配置" not in wb.sheetnames:
+            wb.create_sheet("配置")
+        ws = wb["配置"]
+        # 检查是否已有该键
+        found = False
+        for row in ws.iter_rows(min_row=2, max_col=2, values_only=False):
+            if row[0].value and str(row[0].value).strip() == key:
+                row[1].value = value
+                found = True
+                break
+        if not found:
+            next_row = (ws.max_row or 1) + 1
+            ws.cell(row=next_row, column=1, value=key)
+            ws.cell(row=next_row, column=2, value=value)
+        wb.save(agent.EXCEL_PATH)
+        wb.close()
+        return True
+    except Exception:
+        return False
+
+
+_read_config_sheet()
+
+
+def _build_system_prompt():
+    """构建包含持仓上下文的 system prompt"""
+    holdings = agent.load_portfolio()
+    total_value, total_pnl, accounts = agent.calculate(holdings)
+    risks = agent.risk_analysis(holdings)
+
+    prompt = f"""你是万万的专属投资理财助手，名叫「万万的投资 Agent」。
+
+## 你的角色
+- 你是专业的个人理财顾问，擅长 A 股投资分析、仓位管理、资产配置
+- 回答要专业、简洁、有实操性
+- 对风险要明确提示，不做虚假承诺
+
+## 万万当前的持仓
+
+总资产: {total_value:,.0f} 元
+累计盈亏: {total_pnl:+,.0f} 元
+总收益率: {total_pnl/(total_value-total_pnl)*100:.2f}%"""
+
+    # 股票持仓
+    stock_text = "\n\n### 股票持仓：\n"
+    for h in holdings:
+        if h["类别"] == "股票" and h["账户"] != "账户二（短线）":
+            ret = h["收益率"] * 100 if h["收益率"] else 0
+            alloc = h["仓位占比"] * 100 if h["仓位占比"] else 0
+            stock_text += f"- {h['名称']}：{h['数量']}股 @ {h['现价']:.2f}元，市值 {h['市值']:,.0f}元，盈亏 {h['盈亏']:+,.0f}元 ({ret:+.1f}%)，仓位占比 {alloc:.1f}%\n"
+    prompt += stock_text
+
+    # 账户概况
+    acc_text = "\n### 各账户：\n"
+    for acct, data in sorted(accounts.items()):
+        acc_text += f"- {acct}：资产 {data['市值']:,.0f}元，盈亏 {data['盈亏']:+,.0f}元\n"
+    prompt += acc_text
+
+    # 资产配置
+    by_type = {}
+    for h in holdings:
+        t = h["类别"]
+        by_type[t] = by_type.get(t, 0) + h["市值"]
+    prompt += f"\n### 资产配置：\n"
+    for t, v in sorted(by_type.items(), key=lambda x: -x[1]):
+        prompt += f"- {t}：{v:,.0f}元 ({v/total_value*100:.1f}%)\n"
+
+    from collections import defaultdict
+    sector_groups = defaultdict(list)
+    for h2 in holdings:
+        if h2["类别"] == "股票" and h2["账户"] != "账户二（短线）" and h2["名称"] in agent.SECTOR_MAP:
+            sector_groups[agent.SECTOR_MAP[h2["名称"]]].append(h2)
+    if sector_groups:
+        prompt += "\n### 板块分布：\n"
+        for sector, stocks in sorted(sector_groups.items(), key=lambda x: -sum(s["市值"] for s in x[1])):
+            names = ", ".join(f"{s['名称']}({s['市值']:,.0f}元)" for s in stocks)
+            prompt += f"- {sector}：{names}\n"
+
+    # 当前风险提示
+    if risks:
+        prompt += "\n### 当前诊断的风险：\n"
+        for r in risks[:5]:
+            prompt += f"- [{r['级别']}] {r['问题']}\n"
+
+    prompt += """
+
+## 回答风格
+- 短期建议：具体操作层面（减仓、加仓、止损线）
+- 中期建议：配置调整、行业布局
+- 长期建议：资产框架、财务规划
+- 需要联网信息时，使用 <search>关键词</search> 标明
+
+## 注意
+- 你只提供分析建议，不构成投资指令
+- 所有操作建议需要结合万万自己的判断
+- 数据来自万万手动维护的持仓表，可能有延迟"""
+    return prompt
+
+
+def web_search(query, max_results=5):
+    """联网搜索，返回搜索结果列表"""
+    results = []
+    encoded = urllib.parse.quote(query)
+    url = f"https://lite.duckduckgo.com/lite/?q={encoded}"
+
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
+        })
+        resp = urllib.request.urlopen(req, timeout=10)
+        html = resp.read().decode("utf-8", errors="ignore")
+        # 解析 DuckDuckGo Lite 结果
+        links = re.findall(r'<a[^>]*href="([^"]*)"[^>]*class="result-link"[^>]*>(.*?)</a>', html, re.DOTALL)
+        snippets = re.findall(r'<td[^>]*class="result-snippet"[^>]*>(.*?)</td>', html, re.DOTALL)
+        for i in range(min(len(links), max_results)):
+            url_text = links[i][0] if i < len(links) else ""
+            title = re.sub(r'<[^>]+>', '', links[i][1]) if i < len(links) else ""
+            snippet = re.sub(r'<[^>]+>', '', snippets[i]) if i < len(snippets) else ""
+            if url_text and not url_text.startswith("http"):
+                url_text = "https://" + url_text
+            results.append({"title": title.strip(), "url": url_text, "snippet": snippet.strip()})
+    except Exception:
+        pass
+
+    if not results:
+        # 备选方案
+        try:
+            url2 = f"https://html.duckduckgo.com/html/?q={encoded}"
+            req2 = urllib.request.Request(url2, headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
+            })
+            resp2 = urllib.request.urlopen(req2, timeout=10)
+            html2 = resp2.read().decode("utf-8", errors="ignore")
+            results2 = re.findall(r'<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>', html2, re.DOTALL)
+            snippets2 = re.findall(r'<a[^>]*class="result__snippet"[^>]*>(.*?)</a>', html2, re.DOTALL)
+            for i in range(min(len(results2), max_results)):
+                title = re.sub(r'<[^>]+>', '', results2[i][1])
+                snippet = re.sub(r'<[^>]+>', '', snippets2[i]) if i < len(snippets2) else ""
+                results.append({"title": title.strip(), "url": results2[i][0], "snippet": snippet.strip()})
+        except Exception:
+            pass
+
+    return results
+
+
+def chat_stream(messages, search_enabled=True):
+    """流式调用 LLM API，逐 block 产出文本"""
+    api_key = LLM_CONFIG["api_key"]
+    if not api_key:
+        yield json.dumps({"error": "未配置 API Key，请在设置页面填写"}, ensure_ascii=False)
+        return
+
+    provider = LLM_CONFIG["provider"]
+    model = LLM_CONFIG["model"]
+    endpoint = LLM_ENDPOINTS.get(provider, LLM_ENDPOINTS["deepseek"])
+    if not endpoint:
+        yield json.dumps({"error": f"未知 provider: {provider}"}, ensure_ascii=False)
+        return
+
+    # 构建消息列表
+    system_prompt = _build_system_prompt()
+    full_messages = [{"role": "system", "content": system_prompt}]
+
+    # 检查最后一条消息是否需要联网搜索
+    last_msg = messages[-1]["content"] if messages else ""
+    should_search = search_enabled and ("搜索" in last_msg[:50] or "查一下" in last_msg[:50] or "联网" in last_msg[:50] or "最新" in last_msg[:50] or "今天" in last_msg[:50])
+
+    search_results = None
+    if should_search:
+        yield json.dumps({"type": "search_status", "content": "🔍 正在联网搜索..."}, ensure_ascii=False)
+        search_results = web_search(last_msg)
+        if search_results:
+            context = "\n\n### 联网搜索结果：\n"
+            for i, r in enumerate(search_results, 1):
+                context += f"{i}. [{r['title']}]({r['url']})\n   {r['snippet']}\n"
+            # 追加到 system prompt
+            full_messages[0]["content"] += context
+            yield json.dumps({"type": "search_status", "content": f"✅ 搜索到 {len(search_results)} 条结果，正在分析..."}, ensure_ascii=False)
+
+    full_messages.extend(messages)
+
+    # 准备请求
+    req_body = json.dumps({
+        "model": model,
+        "messages": full_messages,
+        "stream": True,
+        "max_tokens": 4096,
+        "temperature": 0.7,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        endpoint,
+        data=req_body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "text/event-stream",
+        },
+        method="POST",
+    )
+
+    try:
+        resp = urllib.request.urlopen(req, timeout=60)
+        buffer = ""
+        while True:
+            chunk = resp.read(1024)
+            if not chunk:
+                break
+            buffer += chunk.decode("utf-8", errors="ignore")
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                line = line.strip()
+                if not line or line.startswith(":"):
+                    continue
+                if line == "data: [DONE]":
+                    return
+                if line.startswith("data: "):
+                    try:
+                        data = json.loads(line[6:])
+                        delta = data.get("choices", [{}])[0].get("delta", {})
+                        content = delta.get("content", "")
+                        if content:
+                            yield json.dumps({"type": "text", "content": content}, ensure_ascii=False)
+                    except json.JSONDecodeError:
+                        continue
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="ignore")
+        yield json.dumps({"type": "error", "content": f"API 请求失败 (HTTP {e.code}): {err_body[:200]}"}, ensure_ascii=False)
+    except Exception as e:
+        yield json.dumps({"type": "error", "content": f"请求异常: {str(e)}"}, ensure_ascii=False)
+
+
+# ============ API 处理 ============
+
+def api_data():
+    """返回持仓数据 JSON"""
+    holdings = agent.load_portfolio()
+    total_value, total_pnl, accounts = agent.calculate(holdings)
+    history = agent.load_history()
+
+    stocks = []
+    for h in holdings:
+        if h["类别"] == "股票":
+            stocks.append({
+                "name": h["名称"],
+                "account": h["账户"],
+                "price": h["现价"],
+                "cost": h["成本价"],
+                "qty": h["数量"],
+                "market_value": h["市值"],
+                "pnl": h["盈亏"],
+                "return_pct": round(h["收益率"] * 100, 2) if h["收益率"] else 0,
+                "alloc_pct": round(h["仓位占比"] * 100, 1) if h["仓位占比"] else 0,
+            })
+
+    by_type = {}
+    for h in holdings:
+        t = h["类别"]
+        by_type[t] = by_type.get(t, 0) + h["市值"]
+
+    return {
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "total_value": total_value,
+        "total_pnl": total_pnl,
+        "total_return_pct": round(total_pnl / (total_value - total_pnl) * 100, 2) if (total_value - total_pnl) > 0 else 0,
+        "stocks": stocks,
+        "accounts": {k: {"value": v["市值"], "pnl": v["盈亏"]} for k, v in accounts.items()},
+        "allocation": {k: v for k, v in sorted(by_type.items(), key=lambda x: -x[1])},
+        "history": [{"date": r["日期"], "total": r["总资产"], "pnl": r["累计盈亏"]} for r in history],
+    }
+
+
+def api_refresh():
+    """刷新行情并返回更新后的数据"""
+    holdings = agent.load_portfolio()
+    prices, failed = agent.fetch_prices()
+    if prices:
+        holdings = agent.update_holdings_with_prices(holdings, prices)
+        agent.save_prices(holdings)
+    # 记录净值（只在15:00收盘后记录）
+    total_value, total_pnl, accounts = agent.calculate(holdings)
+    detail = {k: v["市值"] for k, v in accounts.items()}
+    snapshot_recorded = agent.save_networth_snapshot(total_value, total_pnl, detail)
+    # 更新 HTML 看板
+    try:
+        from report_generator import generate as gen_html
+        gen_html()
+    except Exception:
+        pass
+    return {
+        "success": True,
+        "updated": len(prices),
+        "failed": failed,
+        "snapshot_recorded": snapshot_recorded,
+        "data": api_data(),
+    }
+
+
+def api_advice():
+    """返回投资建议"""
+    holdings = agent.load_portfolio()
+    risks = agent.risk_analysis(holdings)
+    advice_text = agent.generate_advice(holdings, risks)
+    agent.save_advice(advice_text)
+    risks_out = [{"level": r["级别"], "issue": r["问题"], "suggestion": r["建议"]} for r in risks]
+    return {
+        "risks": risks_out,
+        "text": advice_text,
+    }
+
+
+def api_breakeven():
+    """返回回本分析"""
+    holdings = agent.load_portfolio()
+    return {"stocks": agent.breakeven_analysis(holdings)}
+
+
+# ============ HTTP 服务器 ============
+
+class PortfolioHandler(BaseHTTPRequestHandler):
+    def _send_json(self, data, status=200):
+        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_html(self, html):
+        body = html.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_html(self):
+        if not HTML_PATH.exists():
+            return "<html><body><h2>webapp.html 未找到</h2></body></html>"
+        return HTML_PATH.read_text(encoding="utf-8")
+
+    def do_GET(self):
+        if self.path == "/" or self.path == "/index.html":
+            self._send_html(self._read_html())
+
+        elif self.path == "/api/data":
+            try:
+                self._send_json(api_data())
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif self.path == "/api/refresh":
+            try:
+                self._send_json(api_refresh())
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif self.path == "/api/advice":
+            try:
+                self._send_json(api_advice())
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif self.path == "/api/breakeven":
+            try:
+                self._send_json(api_breakeven())
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif self.path == "/api/config":
+            self._send_json({
+                "provider": LLM_CONFIG["provider"],
+                "model": LLM_CONFIG["model"],
+                "has_key": bool(LLM_CONFIG["api_key"]),
+                "key_prefix": LLM_CONFIG["api_key"][:8] + "..." if LLM_CONFIG["api_key"] else "",
+            })
+
+        else:
+            self._send_json({"error": "not found"}, 404)
+
+    def do_POST(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+        data = json.loads(body) if body else {}
+
+        if self.path == "/api/chat":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+
+            messages = data.get("messages", [])
+            search_enabled = data.get("search", True)
+
+            for chunk in chat_stream(messages, search_enabled):
+                try:
+                    self.wfile.write(f"data: {chunk}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+                except BrokenPipeError:
+                    break
+            try:
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+            except BrokenPipeError:
+                pass
+
+        elif self.path == "/api/save-config":
+            key = data.get("key", "")
+            value = data.get("value", "")
+            if key == "api_key":
+                LLM_CONFIG["api_key"] = value
+                save_config_sheet("api_key", value)
+            elif key == "provider":
+                LLM_CONFIG["provider"] = value
+                save_config_sheet("provider", value)
+            elif key == "model":
+                LLM_CONFIG["model"] = value
+                save_config_sheet("model", value)
+            self._send_json({"success": True})
+
+        else:
+            self._send_json({"error": "not found"}, 404)
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] {args[0]} {args[1]} {args[2]}")
+
+
+def main():
+    server = HTTPServer((HOST, PORT), PortfolioHandler)
+    print(f"\n{'='*50}")
+    print(f"  📊 投资追踪 Agent 已启动！")
+    print(f"  {'='*50}")
+    print(f"  浏览器打开:")
+    print(f"  → http://{HOST}:{PORT}")
+    print(f"  {'='*50}")
+    print(f"  按 Ctrl+C 停止服务器\n")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n🛑 服务器已停止")
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()

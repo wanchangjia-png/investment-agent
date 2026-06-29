@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📊 万万的投资 Agent</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f5f7fa; color: #1a1a2e; padding: 20px; overflow: hidden; height: 100vh; }
+.container { max-width: 1360px; margin: 0 auto; display: flex; flex-direction: column; height: calc(100vh - 40px); }
+
+/* 顶部导航 */
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; padding-bottom: 12px;
+    border-bottom: 2px solid #2F5496; flex-shrink: 0; }
+.header h1 { font-size: 20px; color: #2F5496; cursor: pointer; }
+.header .time { font-size: 12px; color: #888; }
+.header-actions { display: flex; gap: 8px; align-items: center; }
+
+.btn { padding: 7px 16px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 500; transition: all 0.2s; }
+.btn-primary { background: #2F5496; color: #fff; }
+.btn-primary:hover { background: #1a3a6c; }
+.btn-primary:disabled { background: #999; cursor: not-allowed; }
+.btn-outline { background: #fff; color: #2F5496; border: 1px solid #2F5496; }
+.btn-outline:hover { background: #f0f4ff; }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+.btn-green { background: #0088CC; color: #fff; }
+.btn-green:hover { background: #006699; }
+.status-bar { font-size: 12px; color: #888; display: flex; align-items: center; gap: 5px; }
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #ddd;
+    border-top-color: #2F5496; border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 主布局：左面板 + 右聊天 */
+.main-layout { display: flex; gap: 16px; flex: 1; min-height: 0; }
+.left-panel { flex: 1; display: flex; flex-direction: column; gap: 12px; overflow: hidden; min-width: 0; }
+
+/* 右聊天面板 */
+.chat-panel { width: 420px; flex-shrink: 0; background: #fff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    display: flex; flex-direction: column; overflow: hidden; }
+.chat-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px 10px;
+    border-bottom: 1px solid #eee; flex-shrink: 0; }
+.chat-header h2 { font-size: 15px; color: #2F5496; }
+.chat-header .chat-actions { display: flex; gap: 6px; align-items: center; }
+.chat-messages { flex: 1; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 12px; }
+.chat-input-area { padding: 12px 18px 14px; border-top: 1px solid #eee; flex-shrink: 0; }
+.chat-input-row { display: flex; gap: 8px; }
+.chat-input-row input { flex: 1; padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px;
+    outline: none; font-family: inherit; }
+.chat-input-row input:focus { border-color: #2F5496; }
+.chat-input-row .send-btn { background: #2F5496; color: #fff; border: none; border-radius: 8px;
+    padding: 10px 20px; font-size: 14px; cursor: pointer; white-space: nowrap; }
+.chat-input-row .send-btn:disabled { background: #999; cursor: not-allowed; }
+.chat-options { display: flex; gap: 14px; margin-top: 8px; font-size: 12px; color: #888; }
+.chat-options label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+
+/* 聊天气泡 */
+.msg { max-width: 85%; padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.6;
+    word-break: break-word; animation: fadeIn 0.2s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.msg.user { align-self: flex-end; background: #2F5496; color: #fff; border-bottom-right-radius: 4px; }
+.msg.assistant { align-self: flex-start; background: #f0f4f8; color: #1a1a2e; border-bottom-left-radius: 4px; }
+.msg.system { align-self: center; background: #fffbe6; color: #8a7a2a; font-size: 12px; padding: 6px 12px; border-radius: 6px; }
+.msg .thinking { font-size: 12px; color: #888; padding: 4px 0; }
+.msg .streaming-cursor::after { content: "▊"; animation: blink 0.8s infinite; color: #2F5496; }
+@keyframes blink { 50% { opacity: 0; } }
+.msg a { color: #2F5496; text-decoration: underline; }
+.msg p { margin: 4px 0; }
+.msg ul, .msg ol { padding-left: 18px; }
+
+/* KPI行 */
+.kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; flex-shrink: 0; }
+.kpi-card { background: #fff; border-radius: 10px; padding: 12px 16px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); cursor: pointer; }
+.kpi-card .label { font-size: 12px; color: #888; }
+.kpi-card .value { font-size: 22px; font-weight: 700; margin: 2px 0; }
+.kpi-card .sub { font-size: 12px; }
+.up { color: #CC0000; } .down { color: #009900; }
+
+/* 持仓+图表区 (tabs) */
+.tab-bar { display: flex; gap: 0; flex-shrink: 0; border-bottom: 2px solid #e0e0e0; }
+.tab-btn { padding: 7px 16px; cursor: pointer; border: none; background: none; font-size: 13px; color: #888;
+    border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.2s; }
+.tab-btn.active { color: #2F5496; border-bottom-color: #2F5496; font-weight: 600; }
+.tab-btn:hover { color: #2F5496; }
+.tab-content { overflow-y: auto; flex: 1; display: none; min-height: 0; background: #fff; border-radius: 0 0 10px 10px; padding: 14px 16px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); }
+.tab-content.active { display: block; }
+
+/* 账户卡片 */
+.accounts-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
+.account-card { background: #fff; border-radius: 10px; padding: 10px 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }
+.account-card .name { font-size: 12px; color: #888; }
+.account-card .value { font-size: 17px; font-weight: 700; }
+.account-card .pnl { font-size: 12px; }
+
+/* 表格 */
+.table-wrap { max-height: 300px; overflow-y: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { background: #f0f4f8; padding: 7px 8px; text-align: left; font-weight: 600;
+    border-bottom: 2px solid #ddd; font-size: 12px; position: sticky; top: 0; z-index: 1; }
+td { padding: 7px 8px; border-bottom: 1px solid #eee; }
+tr:hover { background: #f8f9ff; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* 图表行 */
+.charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.chart-box { position: relative; height: 220px; }
+
+/* 风险卡片 */
+.risk-list { max-height: 350px; overflow-y: auto; }
+.risk-item { padding: 10px 14px; border-radius: 8px; margin-bottom: 8px; font-size: 13px; }
+.risk-high { background: #fff0f0; border-left: 4px solid #CC0000; }
+.risk-mid { background: #fffbe6; border-left: 4px solid #FFC000; }
+.risk-item .level { font-weight: 600; font-size: 12px; }
+.risk-item .issue { margin: 3px 0; }
+.risk-item .suggestion { color: #666; font-size: 12px; }
+
+/* 建议 */
+.advice-box { font-size: 13px; line-height: 1.7; white-space: pre-wrap; max-height: 400px; overflow-y: auto;
+    font-family: "PingFang SC", monospace; }
+
+/* 设置弹窗 */
+.modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.4); z-index: 1000; align-items: center; justify-content: center; }
+.modal-overlay.show { display: flex; }
+.modal { background: #fff; border-radius: 14px; padding: 30px; width: 460px; max-width: 90vw; box-shadow: 0 8px 32px rgba(0,0,0,0.15); }
+.modal h2 { font-size: 18px; color: #2F5496; margin-bottom: 16px; }
+.modal .field { margin-bottom: 14px; }
+.modal .field label { display: block; font-size: 13px; color: #555; margin-bottom: 4px; font-weight: 500; }
+.modal .field input, .modal .field select { width: 100%; padding: 9px 12px; border: 1px solid #ddd; border-radius: 8px;
+    font-size: 14px; outline: none; font-family: inherit; }
+.modal .field input:focus, .modal .field select:focus { border-color: #2F5496; }
+.modal .field .hint { font-size: 12px; color: #888; margin-top: 3px; }
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+.modal .close-btn { float: right; background: none; border: none; font-size: 22px; cursor: pointer; color: #888; }
+.empty-state { text-align: center; padding: 30px; color: #aaa; font-size: 13px; }
+.empty-state .icon { font-size: 36px; margin-bottom: 8px; }
+.history-table { max-height: 300px; overflow-y: auto; }
+
+/* 移动端 */
+@media (max-width: 900px) {
+    .main-layout { flex-direction: column; }
+    .chat-panel { width: 100%; height: 400px; }
+    .kpi-row { grid-template-columns: repeat(2, 1fr); }
+    .accounts-row { grid-template-columns: 1fr; }
+    .charts-row { grid-template-columns: 1fr; }
+}
+
+/* 搜索标记 */
+.search-tag { display: inline-block; background: #e8f0fe; color: #2F5496; font-size: 11px;
+    padding: 1px 6px; border-radius: 4px; margin-left: 4px; }
+
+/* 回本进度条 */
+.be-card { background:#fff; border-radius:10px; padding:14px 16px; margin-bottom:10px; box-shadow:0 1px 4px rgba(0,0,0,0.05); }
+.be-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+.be-name { font-weight:600; font-size:14px; }
+.be-account { font-size:11px; color:#999; }
+.be-bar-bg { height:20px; background:#f0f0f0; border-radius:10px; overflow:hidden; position:relative; }
+.be-bar-fill { height:100%; border-radius:10px; transition:width 0.6s ease; }
+.be-bar-text { position:absolute; top:0; left:0; right:0; height:20px; line-height:20px; text-align:center; font-size:11px; font-weight:600; color:#333; }
+.be-detail { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:8px; font-size:12px; }
+.be-detail-item { text-align:center; }
+.be-detail-item .lbl { color:#999; font-size:11px; }
+.be-detail-item .val { font-weight:600; font-size:13px; }
+.be-scenarios { margin-top:10px; padding-top:8px; border-top:1px solid #f0f0f0; font-size:12px; }
+.be-scenarios .row { display:flex; gap:12px; justify-content:center; }
+.be-scenarios .scenario { background:#f8f9ff; padding:4px 10px; border-radius:6px; text-align:center; }
+.be-scenarios .scenario .lbl { color:#999; font-size:10px; }
+.be-scenarios .scenario .val { font-weight:600; font-size:13px; }
+.be-already { background:#e8f5e9; color:#2e7d32; padding:6px 12px; border-radius:6px; font-size:13px; text-align:center; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- ===== 顶部 ===== -->
+<div class="header">
+    <h1 onclick="switchLayout('split')" title="点击切换布局">📊 万万的投资 Agent</h1>
+    <div style="display:flex;align-items:center;gap:12px;">
+        <span class="status-bar" id="statusBar">就绪</span>
+        <button class="btn btn-sm btn-outline" onclick="showSettings()">⚙️</button>
+        <button class="btn btn-primary" id="refreshBtn" onclick="refreshData()">🔄 刷新</button>
+    </div>
+</div>
+
+<div class="main-layout" id="mainLayout">
+    <!-- ===== 左面板 ===== -->
+    <div class="left-panel" id="leftPanel">
+        <div class="kpi-row" id="kpiRow">
+            <div class="kpi-card"><div class="label">总资产</div><div class="value" id="kpiTotal">--</div><div class="sub">元</div></div>
+            <div class="kpi-card"><div class="label">累计盈亏</div><div class="value" id="kpiPnl">--</div><div class="sub" id="kpiReturn">--</div></div>
+            <div class="kpi-card"><div class="label">股票</div><div class="value" id="kpiCount">--</div><div class="sub">只</div></div>
+            <div class="kpi-card" onclick="switchTab('risks')"><div class="label">风险项</div><div class="value" id="kpiRisk">--</div><div class="sub" id="kpiRiskLabel">待处理</div></div>
+        </div>
+
+        <div class="accounts-row" id="accountsRow"></div>
+
+        <div style="flex:1;display:flex;flex-direction:column;min-height:0;">
+            <div class="tab-bar">
+                <button class="tab-btn active" onclick="switchTab('holdings',this)">📋 持仓</button>
+                <button class="tab-btn" onclick="switchTab('charts',this)">📊 图表</button>
+                <button class="tab-btn" onclick="switchTab('risks',this)">⚠️ 风险</button>
+                <button class="tab-btn" onclick="switchTab('history',this)">📈 净值</button>
+                <button class="tab-btn" onclick="switchTab('breakeven',this)">🎯 回本</button>
+                <button class="tab-btn" onclick="switchTab('advice',this)">💡 建议</button>
+            </div>
+
+            <div class="tab-content active" id="tabHoldings">
+                <div class="table-wrap"><table><thead><tr>
+                    <th>名称</th><th>账户</th><th>持股</th><th>现价</th><th>成本</th>
+                    <th class="num">市值</th><th class="num">盈亏</th><th class="num">收益率</th><th class="num">占比</th>
+                </tr></thead><tbody id="holdingsBody"></tbody></table></div>
+                <div id="holdingsEmpty" class="empty-state" style="display:none;"><div class="icon">📭</div><div>暂无持仓</div></div>
+            </div>
+
+            <div class="tab-content" id="tabCharts">
+                <div class="charts-row">
+                    <div class="chart-box"><canvas id="pieChart"></canvas></div>
+                    <div class="chart-box"><canvas id="lineChart"></canvas></div>
+                </div>
+            </div>
+
+            <div class="tab-content" id="tabRisks"><div class="risk-list" id="risksContainer"></div>
+                <div id="risksEmpty" class="empty-state" style="display:none;"><div class="icon">✅</div><div>无显著风险</div></div>
+            </div>
+
+            <div class="tab-content" id="tabHistory"><div class="history-table" id="historyContainer"></div>
+                <div id="historyEmpty" class="empty-state" style="display:none;"><div class="icon">📈</div><div>暂无历史</div></div>
+            </div>
+
+            <div class="tab-content" id="tabAdvice">
+                <button class="btn btn-sm btn-primary" onclick="loadAdvice()" style="margin-bottom:8px;">💡 生成最新建议</button>
+                <div class="advice-box" id="adviceContainer"><div class="empty-state"><div class="icon">💡</div><div>点击生成建议</div></div></div>
+            </div>
+
+            <div class="tab-content" id="tabBreakeven">
+                <div id="beContainer"></div>
+                <div id="beEmpty" class="empty-state" style="display:none;"><div class="icon">🎯</div><div>暂无数据</div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== 右面板：对话 ===== -->
+    <div class="chat-panel" id="chatPanel">
+        <div class="chat-header">
+            <h2>💬 对话 Agent</h2>
+            <div class="chat-actions">
+                <span id="modelBadge" style="font-size:11px;color:#888;background:#f0f4f8;padding:2px 8px;border-radius:4px;"></span>
+                <button class="btn btn-sm btn-outline" onclick="clearChat()" title="清空对话">🗑️</button>
+            </div>
+        </div>
+        <div class="chat-messages" id="chatMessages">
+            <div class="msg assistant">
+                👋 你好！我是你的投资 Agent。我可以：
+                <br>• 分析你的持仓和风险
+                <br>• 给仓位管理建议
+                <br>• 联网搜索最新市场信息
+                <br>• 回答理财问题
+                <br><br>试试问我："帮我分析持仓风险" 或 "查一下今天A股行情"
+            </div>
+        </div>
+        <div class="chat-input-area">
+            <div class="chat-input-row">
+                <input type="text" id="chatInput" placeholder="输入你的问题..." onkeydown="if(event.key==='Enter') sendMessage()">
+                <button class="send-btn" id="sendBtn" onclick="sendMessage()">发送</button>
+            </div>
+            <div class="chat-options">
+                <label><input type="checkbox" id="searchToggle" checked> 联网搜索</label>
+                <span id="chatStatus" style="color:#888;"></span>
+            </div>
+        </div>
+    </div>
+</div>
+
+</div>
+
+<!-- ===== 设置弹窗 ===== -->
+<div class="modal-overlay" id="settingsModal">
+    <div class="modal">
+        <button class="close-btn" onclick="hideSettings()">&times;</button>
+        <h2>⚙️ 设置</h2>
+
+        <div class="field">
+            <label>AI 模型提供商</label>
+            <select id="selProvider" onchange="updateModelHint()">
+                <option value="deepseek">DeepSeek</option>
+                <option value="openai">OpenAI</option>
+            </select>
+        </div>
+
+        <div class="field">
+            <label>API Key</label>
+            <input type="password" id="inpApiKey" placeholder="sk-...">
+            <div class="hint" id="keyStatus">未配置。点击保存后生效。</div>
+        </div>
+
+        <div class="field">
+            <label>模型</label>
+            <select id="selModel">
+                <option value="deepseek-chat">deepseek-chat (DeepSeek V4)</option>
+                <option value="deepseek-reasoner">deepseek-reasoner (DeepSeek R1)</option>
+                <option value="gpt-4o">GPT-4o</option>
+                <option value="gpt-4o-mini">GPT-4o-mini</option>
+            </select>
+            <div class="hint" id="modelHint">推荐 deepseek-chat，性价比最高</div>
+        </div>
+
+        <div class="field">
+            <label>获取 API Key</label>
+            <div class="hint">
+                • DeepSeek: <a href="https://platform.deepseek.com/api_keys" target="_blank">platform.deepseek.com</a>
+                <br>• OpenAI: <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com</a>
+            </div>
+        </div>
+
+        <div class="modal-actions">
+            <button class="btn btn-outline" onclick="hideSettings()">取消</button>
+            <button class="btn btn-primary" onclick="saveSettings()">保存</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ============ 全局状态 ============
+let state = { data: null };
+let chartPie = null, chartLine = null;
+let isStreaming = false;
+
+// ============ 加载数据 ============
+async function loadData() {
+    try {
+        const res = await fetch("/api/data");
+        state.data = await res.json();
+        render();
+    } catch (e) { document.getElementById("statusBar").textContent = "⚠️ 连接失败"; }
+}
+
+async function refreshData() {
+    const btn = document.getElementById("refreshBtn");
+    const bar = document.getElementById("statusBar");
+    btn.disabled = true; bar.innerHTML = '<span class="spinner"></span> 刷新中...';
+    try {
+        const res = await fetch("/api/refresh");
+        const result = await res.json();
+        if (result.success) {
+            state.data = result.data; render();
+            const snapMsg = result.snapshot_recorded ? " 📸已记录净值" : "";
+            bar.textContent = "✅ " + new Date().toLocaleTimeString() + snapMsg;
+        } else { bar.textContent = "⚠️ 刷新失败"; }
+    } catch (e) { bar.textContent = "⚠️ 请求失败"; }
+    btn.disabled = false;
+}
+
+// ============ 渲染 ============
+function render() {
+    const d = state.data; if (!d) return;
+    // KPI
+    document.getElementById("kpiTotal").textContent = d.total_value.toLocaleString();
+    const pnlEl = document.getElementById("kpiPnl");
+    pnlEl.textContent = (d.total_pnl >= 0 ? "+" : "") + d.total_pnl.toLocaleString();
+    pnlEl.className = "value " + (d.total_pnl >= 0 ? "up" : "down");
+    const retEl = document.getElementById("kpiReturn");
+    retEl.textContent = (d.total_return_pct >= 0 ? "+" : "") + d.total_return_pct + "%";
+    retEl.style.color = d.total_return_pct >= 0 ? "#CC0000" : "#009900";
+    document.getElementById("kpiCount").textContent = d.stocks.length;
+
+    // 风险 KPI
+    try { fetch("/api/advice").then(r=>r.json()).then(r=>{
+        const count = r.risks ? r.risks.length : 0;
+        document.getElementById("kpiRisk").textContent = count;
+        document.getElementById("kpiRisk").style.color = count > 0 ? "#CC0000" : "#009900";
+        document.getElementById("kpiRiskLabel").textContent = count > 0 ? "待处理" : "无风险";
+        document.getElementById("risksContainer").innerHTML = r.risks.map(ri => {
+            const cls = ri.level.includes("高风险") ? "risk-high" : "risk-mid";
+            return `<div class="risk-item ${cls}"><div class="level">${ri.level}</div><div class="issue">${ri.issue}</div><div class="suggestion">→ ${ri.suggestion}</div></div>`;
+        }).join("");
+    }).catch(()=>{}); } catch(e) {}
+
+    // 账户
+    document.getElementById("accountsRow").innerHTML = Object.entries(d.accounts).map(([n,a]) =>
+        `<div class="account-card"><div class="name">${n}</div><div class="value">${a.value.toLocaleString()}</div><div class="pnl ${a.pnl>=0?'up':'down'}">${a.pnl>=0?"+":""}${a.pnl.toLocaleString()}</div></div>`
+    ).join("");
+
+    // 持仓表
+    const body = document.getElementById("holdingsBody");
+    if (!d.stocks || d.stocks.length === 0) {
+        body.innerHTML = ""; document.getElementById("holdingsEmpty").style.display = "block";
+    } else {
+        document.getElementById("holdingsEmpty").style.display = "none";
+        body.innerHTML = d.stocks.map(s => {
+            const pc = s.pnl>=0?"up":"down", rc = s.return_pct>=0?"up":"down";
+            return `<tr><td class="stock-name">${s.name}</td><td style="font-size:12px;color:#888;">${s.account||'-'}</td><td>${s.qty||'-'}</td><td>${s.price?s.price.toFixed(2):'-'}</td><td>${s.cost?s.cost.toFixed(2):'-'}</td><td class="num">${s.market_value?s.market_value.toLocaleString():'-'}</td><td class="num ${pc}">${s.pnl>=0?"+":""}${s.pnl?s.pnl.toLocaleString():'-'}</td><td class="num ${rc}">${s.return_pct>=0?"+":""}${s.return_pct}%</td><td class="num">${s.alloc_pct}%</td></tr>`;
+        }).join("");
+    }
+
+    // 图表
+    renderCharts(d);
+    renderHistory(d.history);
+}
+
+function renderCharts(d) {
+    const alloc = d.allocation || {};
+    const labels = Object.keys(alloc), values = Object.values(alloc);
+    const colors = {"股票":"#2F5496","黄金":"#FFC000","现金":"#70AD47","债基":"#5B9BD5","理财":"#4472C4"};
+    if (chartPie) chartPie.destroy();
+    chartPie = new Chart(document.getElementById("pieChart"), { type:"pie", data:{labels,datasets:[{data:values,backgroundColor:labels.map(k=>colors[k]||"#999"),borderWidth:2}]}, options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom",labels:{font:{size:11}}}}}});
+
+    const hist = d.history || [];
+    if (chartLine) chartLine.destroy();
+    if (hist.length > 0) {
+        chartLine = new Chart(document.getElementById("lineChart"), { type:"line", data:{labels:hist.map(r=>r.date),datasets:[{label:"总资产",data:hist.map(r=>r.total),borderColor:"#2F5496",backgroundColor:"rgba(47,84,150,0.1)",fill:true,tension:0.3,pointRadius:3,pointBackgroundColor:"#2F5496"}]}, options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:false,ticks:{callback:v=>v.toLocaleString()}}}} });
+    } else {
+        const el = document.getElementById("lineChart");
+        if (el) el.parentElement.innerHTML = '<div class="empty-state"><div class="icon">📈</div><div>暂无数据</div></div>';
+    }
+}
+
+function renderHistory(history) {
+    const container = document.getElementById("historyContainer");
+    const empty = document.getElementById("historyEmpty");
+    if (!history || history.length === 0) { container.innerHTML=""; empty.style.display="block"; return; }
+    empty.style.display="none";
+    container.innerHTML = `<table><thead><tr><th>日期</th><th class="num">总资产</th><th class="num">盈亏</th></tr></thead><tbody>${history.map(r=>`<tr><td>${r.date}</td><td class="num">${r.total.toLocaleString()}</td><td class="num ${r.pnl>=0?'up':'down'}">${r.pnl>=0?'+':''}${r.pnl.toLocaleString()}</td></tr>`).join("")}</tbody></table>`;
+}
+
+// ============ 建议 ============
+async function loadAdvice() {
+    const c = document.getElementById("adviceContainer");
+    c.innerHTML = '<div class="empty-state"><span class="spinner"></span> 生成中...</div>';
+    try {
+        const r = await fetch("/api/advice"); const d = await r.json();
+        c.innerHTML = `<div class="advice-box">${d.text}</div>`;
+    } catch(e) { c.innerHTML = '<div class="empty-state">⚠️ 生成失败</div>'; }
+}
+
+// ============ Tab 切换 ============
+function switchTab(name, btn) {
+    document.querySelectorAll(".tab-btn").forEach(t=>t.classList.remove("active"));
+    document.querySelectorAll(".tab-content").forEach(t=>t.classList.remove("active"));
+    if (btn) btn.classList.add("active");
+    const tabName = "tab" + name.charAt(0).toUpperCase() + name.slice(1);
+    const tab = document.getElementById(tabName);
+    if (tab) tab.classList.add("active");
+    // 按需加载数据
+    if (name === "breakeven") loadBreakeven();
+}
+
+// ============ 对话框 ============
+async function sendMessage() {
+    const input = document.getElementById("chatInput");
+    const text = input.value.trim();
+    if (!text || isStreaming) return;
+
+    const messages = document.getElementById("chatMessages");
+    const sendBtn = document.getElementById("sendBtn");
+    const statusEl = document.getElementById("chatStatus");
+
+    // 添加用户消息
+    messages.innerHTML += `<div class="msg user">${escapeHtml(text)}</div>`;
+    input.value = "";
+    messages.scrollTop = messages.scrollHeight;
+
+    // AI 消息占位
+    const aiMsgId = "msg-" + Date.now();
+    messages.innerHTML += `<div class="msg assistant" id="${aiMsgId}"><span class="spinner"></span> 思考中...</div>`;
+    messages.scrollTop = messages.scrollHeight;
+
+    isStreaming = true;
+    sendBtn.disabled = true;
+    statusEl.textContent = "AI 回复中...";
+
+    // 构建消息历史
+    const history = [];
+    const allMsgs = messages.querySelectorAll(".msg.user, .msg.assistant:not(.system)");
+    allMsgs.forEach(m => {
+        if (m.id === aiMsgId) return;
+        if (m.classList.contains("user")) history.push({role:"user",text:m.textContent});
+        else if (m.classList.contains("assistant") && !m.querySelector(".spinner")) {
+            // 提取纯文本（去除流式光标）
+            let t = m.textContent || "";
+            history.push({role:"assistant",text:t});
+        }
+    });
+    history.push({role:"user",text});
+
+    const searchEnabled = document.getElementById("searchToggle").checked;
+
+    try {
+        const res = await fetch("/api/chat", {
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({ messages: history.map(h=>({role:h.role,content:h.text})), search: searchEnabled })
+        });
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        const aiEl = document.getElementById(aiMsgId);
+        aiEl.innerHTML = "";
+        let buffer = "";
+        let fullText = "";
+        let hasSearchStatus = false;
+
+        while (true) {
+            const {done, value} = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, {stream: true});
+            const parts = buffer.split("\n");
+            buffer = parts.pop() || "";
+
+            for (const part of parts) {
+                const line = part.trim();
+                if (!line || !line.startsWith("data: ")) continue;
+                const jsonStr = line.slice(6);
+                if (jsonStr === "[DONE]") continue;
+
+                try {
+                    const data = JSON.parse(jsonStr);
+                    if (data.type === "text") {
+                        fullText += data.content;
+                        aiEl.innerHTML = marked(fullText) + '<span class="streaming-cursor"></span>';
+                        messages.scrollTop = messages.scrollHeight;
+                    } else if (data.type === "search_status") {
+                        hasSearchStatus = true;
+                        aiEl.innerHTML = `<div class="thinking">${data.content}</div>`;
+                    } else if (data.type === "error") {
+                        aiEl.innerHTML = `<div style="color:#CC0000;">⚠️ ${data.content}</div>`;
+                    }
+                } catch(e) {}
+            }
+        }
+        // 移除光标
+        if (fullText) {
+            const el = document.getElementById(aiMsgId);
+            if (el) el.innerHTML = marked(fullText);
+        }
+    } catch(e) {
+        const el = document.getElementById(aiMsgId);
+        if (el) el.innerHTML = `<div style="color:#CC0000;">⚠️ 请求失败: ${e.message}</div>`;
+    }
+
+    isStreaming = false;
+    sendBtn.disabled = false;
+    statusEl.textContent = "";
+}
+
+function clearChat() {
+    if (!confirm("清空对话？")) return;
+    document.getElementById("chatMessages").innerHTML = `<div class="msg assistant">👋 对话已清空，请问有什么投资问题？</div>`;
+}
+
+// ============ 设置 ============
+async function showSettings() {
+    document.getElementById("settingsModal").classList.add("show");
+    try {
+        const res = await fetch("/api/config");
+        const cfg = await res.json();
+        document.getElementById("selProvider").value = cfg.provider;
+        document.getElementById("inpApiKey").value = "";
+        document.getElementById("keyStatus").textContent = cfg.has_key ? `✅ 已配置 (${cfg.key_prefix})` : "❌ 未配置";
+        // 设置模型
+        const sel = document.getElementById("selModel");
+        for (let opt of sel.options) { if (opt.value === cfg.model) { sel.value = cfg.model; break; } }
+        updateModelHint();
+    } catch(e) {}
+}
+
+function hideSettings() { document.getElementById("settingsModal").classList.remove("show"); }
+
+async function saveSettings() {
+    const provider = document.getElementById("selProvider").value;
+    const apiKey = document.getElementById("inpApiKey").value.trim();
+    const model = document.getElementById("selModel").value;
+
+    if (apiKey) {
+        await fetch("/api/save-config", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({key:"api_key",value:apiKey})});
+    }
+    await fetch("/api/save-config", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({key:"provider",value:provider})});
+    await fetch("/api/save-config", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({key:"model",value:model})});
+
+    // 更新 badge
+    document.getElementById("modelBadge").textContent = model;
+
+    hideSettings();
+    alert("✅ 已保存！请重新发送消息生效。");
+}
+
+function updateModelHint() {
+    const p = document.getElementById("selProvider").value;
+    const sel = document.getElementById("selModel");
+    const hint = document.getElementById("modelHint");
+    if (p === "deepseek") {
+        sel.innerHTML = `<option value="deepseek-chat">deepseek-chat (DeepSeek V4)</option><option value="deepseek-reasoner">deepseek-reasoner (DeepSeek R1)</option>`;
+        hint.textContent = "推荐 deepseek-chat，速度快性价比高";
+    } else {
+        sel.innerHTML = `<option value="gpt-4o">GPT-4o</option><option value="gpt-4o-mini">GPT-4o-mini</option>`;
+        hint.textContent = "需要 OpenAI API Key";
+    }
+}
+
+// ============ 回本分析 ============
+async function loadBreakeven() {
+    const container = document.getElementById("beContainer");
+    const empty = document.getElementById("beEmpty");
+    container.innerHTML = '<div class="empty-state"><span class="spinner"></span> 加载中...</div>';
+    try {
+        const res = await fetch("/api/breakeven");
+        const data = await res.json();
+        const stocks = data.stocks || [];
+        if (stocks.length === 0) { container.innerHTML=""; empty.style.display="block"; return; }
+        empty.style.display="none";
+
+        // 整体统计
+        const totalCost = stocks.reduce((a,s)=>a+s.total_cost,0);
+        const totalValue = stocks.reduce((a,s)=>a+s.total_value,0);
+        const totalPnL = stocks.reduce((a,s)=>a+s.pnl,0);
+        const overallProgress = totalCost > 0 ? Math.round(totalValue/totalCost*100) : 0;
+        const lossStocks = stocks.filter(s=>s.pnl<0);
+        const profitStocks = stocks.filter(s=>s.pnl>0);
+
+        let html = `<div class="be-card">
+            <div class="be-header"><div class="be-name">📊 整体回本进度</div></div>
+            <div class="be-bar-bg">
+                <div class="be-bar-fill" style="width:${Math.min(overallProgress,100)}%;background:${overallProgress>=100?'#4CAF50':overallProgress>=80?'#FFC000':'#f44336'}"></div>
+                <div class="be-bar-text">${overallProgress}%${totalPnL<0?'（还需涨 '+((totalCost/totalValue-1)*100).toFixed(1)+'%）':' ✅ 已整体盈利'}</div>
+            </div>
+            <div class="be-detail">
+                <div class="be-detail-item"><div class="lbl">总投入</div><div class="val">${totalCost.toLocaleString()}</div></div>
+                <div class="be-detail-item"><div class="lbl">当前市值</div><div class="val">${totalValue.toLocaleString()}</div></div>
+                <div class="be-detail-item"><div class="lbl">累计盈亏</div><div class="val" style="color:${totalPnL>=0?'#f44336':'#009900'}">${totalPnL>=0?'+':''}${totalPnL.toFixed(0)}</div></div>
+                <div class="be-detail-item"><div class="lbl">亏损股票</div><div class="val">${lossStocks.length}/${stocks.length}只</div></div>
+            </div>
+        </div>`;
+
+        // 每只股票
+        for (const s of stocks) {
+            const progress = s.be_progress;
+            const barColor = progress >= 100 ? '#4CAF50' : progress >= 80 ? '#FFC000' : '#f44336';
+            const barWidth = Math.min(progress, 100);
+
+            html += `<div class="be-card">
+                <div class="be-header">
+                    <div><span class="be-name">${s.name}</span> <span class="be-account">${s.account}</span></div>
+                    <span style="font-size:12px;color:#888;">${s.qty}股 · 成本 ${s.cost}元</span>
+                </div>
+                <div class="be-bar-bg">
+                    <div class="be-bar-fill" style="width:${barWidth}%;background:${barColor}"></div>
+                    <div class="be-bar-text">${progress}%${progress>=100?' ✅ 已回本':''}</div>
+                </div>
+                <div class="be-detail">
+                    <div class="be-detail-item"><div class="lbl">现价</div><div class="val">${s.price.toFixed(2)}</div></div>
+                    <div class="be-detail-item"><div class="lbl">盈亏</div><div class="val" style="color:${s.pnl>=0?'#f44336':'#009900'}">${s.pnl>=0?'+':''}${s.pnl.toFixed(0)}</div></div>
+                    <div class="be-detail-item"><div class="lbl">盈亏率</div><div class="val" style="color:${s.pnl>=0?'#f44336':'#009900'}">${s.pnl>=0?'+':''}${Math.abs(s.return_pct).toFixed(1)}%</div></div>
+                    <div class="be-detail-item"><div class="lbl">需涨</div><div class="val">${s.rise_needed>0?s.rise_needed.toFixed(1):'0'}%</div></div>
+                </div>`;
+
+            // 预估回本时间
+            const sc = s.scenarios || {};
+            const keys = Object.keys(sc);
+            if (keys.length > 0) {
+                html += `<div class="be-scenarios"><div class="row">`;
+                for (const k of keys) {
+                    html += `<div class="scenario"><div class="lbl">${k}</div><div class="val">${sc[k]}</div></div>`;
+                }
+                html += `</div><div style="text-align:center;color:#999;margin-top:6px;font-size:11px;">基于月涨幅预估，仅供参考</div></div>`;
+            } else if (s.pnl >= 0) {
+                html += `<div class="be-already">✅ 已回本，当前盈利 ${s.pnl.toFixed(0)} 元</div>`;
+            }
+
+            html += `</div>`;
+        }
+
+        container.innerHTML = html;
+    } catch(e) {
+        container.innerHTML = `<div class="empty-state">⚠️ 加载失败</div>`;
+    }
+}
+
+// ============ 工具 ============
+function escapeHtml(t) {
+    return t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function marked(text) {
+    // 简单的 Markdown 渲染
+    let t = escapeHtml(text);
+    t = t.replace(/### (.+)/g, '<b>$1</b>');
+    t = t.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+    t = t.replace(/\*(.+?)\*/g, '<i>$1</i>');
+    t = t.replace(/^- (.+)/gm, '• $1');
+    t = t.replace(/\n/g, '<br>');
+    t = t.replace(/<br><br>/g, '</p><p>');
+    t = '<p>' + t + '</p>';
+    t = t.replace(/<p><\/p>/g, '');
+    return t;
+}
+
+// ============ 初始化 ============
+loadData();
+
+// 加载配置 badge
+fetch("/api/config").then(r=>r.json()).then(cfg => {
+    document.getElementById("modelBadge").textContent = cfg.model || "未配置";
+}).catch(()=>{});
+
+// 每 3 分钟刷新数据
+setInterval(loadData, 3 * 60 * 1000);
+</script>
+</body>
+</html>
