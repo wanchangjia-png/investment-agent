@@ -593,6 +593,18 @@ class PortfolioHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
+        elif self.path == "/api/holdings-save":
+            try:
+                holdings_data = data.get("holdings", [])
+                result = agent.save_holdings(holdings_data)
+                prices, failed = agent.fetch_prices()
+                if prices:
+                    result = agent.update_holdings_with_prices(result, prices)
+                    agent.save_prices(result)
+                self._send_json({"success": True})
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)}, 500)
+
         else:
             self._send_json({"error": "not found"}, 404)
 

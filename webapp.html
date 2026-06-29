@@ -192,6 +192,7 @@ tr:hover { background: #f8f9ff; }
     <div style="display:flex;align-items:center;gap:12px;">
         <span class="status-bar" id="statusBar">就绪</span>
         <button class="btn btn-sm btn-outline" onclick="showSettings()">⚙️</button>
+        <button class="btn btn-sm btn-outline" onclick="showEditHoldings()">📝 编辑持仓</button>
         <button class="btn btn-primary" id="refreshBtn" onclick="refreshData()">🔄 刷新</button>
     </div>
 </div>
@@ -329,6 +330,38 @@ tr:hover { background: #f8f9ff; }
         <div class="modal-actions">
             <button class="btn btn-outline" onclick="hideSettings()">取消</button>
             <button class="btn btn-primary" onclick="saveSettings()">保存</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== 编辑持仓弹窗 ===== -->
+<div class="modal-overlay" id="editHoldingsModal">
+    <div class="modal" style="width:700px;max-width:95vw;">
+        <button class="close-btn" onclick="hideEditHoldings()">&times;</button>
+        <h2>📝 编辑持仓</h2>
+        <p style="font-size:12px;color:#888;margin-bottom:10px;">修改后点击保存，系统会自动刷新行情。仅支持股票/现金类型。删除行即清空该行内容留空，保存时会自动移除。</p>
+        <div style="max-height:400px;overflow-y:auto;border:1px solid #eee;border-radius:8px;" id="editTableWrap">
+            <table style="font-size:12px;min-width:650px;" id="editHoldingsTable">
+                <thead><tr>
+                    <th style="width:30px;"></th>
+                    <th>类别</th>
+                    <th>账户</th>
+                    <th>名称</th>
+                    <th>代码</th>
+                    <th style="width:80px;">持股数</th>
+                    <th style="width:80px;">成本价</th>
+                    <th style="width:100px;">备注</th>
+                </tr></thead>
+                <tbody id="editHoldingsBody"></tbody>
+            </table>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-sm btn-outline" onclick="addEditRow()">➕ 新增股票</button>
+            <button class="btn btn-sm btn-outline" onclick="addEditRow('cash')">💰 新增现金</button>
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-outline" onclick="hideEditHoldings()">取消</button>
+            <button class="btn btn-primary" id="saveHoldingsBtn" onclick="saveEditHoldings()">💾 保存</button>
         </div>
     </div>
 </div>
@@ -825,6 +858,124 @@ async function loadAiAddAdvice(name, sector, qty, cost, price, cash, resultId, b
     btn.disabled = false;
     btn.textContent = '🤖 AI 加仓分析';
 }
+
+// ============ 编辑持仓 ============
+let editHoldingsData = [];
+
+function showEditHoldings() {
+    const modal = document.getElementById("editHoldingsModal");
+    modal.classList.add("show");
+    // 从已有数据加载
+    const d = state.data;
+    if (d && d.stocks) {
+        editHoldingsData = d.stocks.map(s => ({
+            type: "股票",
+            account: s.account || "A股主账户",
+            name: s.name,
+            code: STOCK_CODES[s.name] || "",
+            qty: s.qty || "",
+            cost: s.cost || "",
+            note: "",
+        }));
+    }
+    // 加现金行
+    const cashVal = document.getElementById("kpiTotal").textContent.replace(/,/g,"");
+    editHoldingsData.push({ type: "现金", account: "A股主账户", name: "可用资金", code: "", qty: "", cost: "", note: "账户余额" });
+    renderEditTable();
+}
+
+function hideEditHoldings() {
+    document.getElementById("editHoldingsModal").classList.remove("show");
+}
+
+function renderEditTable() {
+    const tbody = document.getElementById("editHoldingsBody");
+    tbody.innerHTML = editHoldingsData.map((row, i) => {
+        if (row._deleted) return '';
+        const isStock = row.type === "股票";
+        return `<tr>
+            <td style="text-align:center;"><button class="btn btn-sm" style="background:none;border:none;color:#CC0000;cursor:pointer;font-size:16px;" onclick="deleteEditRow(${i})">&times;</button></td>
+            <td>
+                <select style="padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;" onchange="editHoldingsData[${i}].type=this.value;renderEditTable()">
+                    <option value="股票" ${isStock?'selected':''}>股票</option>
+                    <option value="现金" ${!isStock?'selected':''}>现金</option>
+                </select>
+            </td>
+            <td><input value="${escapeHtml(row.account)}" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;" onchange="editHoldingsData[${i}].account=this.value"></td>
+            <td><input value="${escapeHtml(row.name)}" style="width:90px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;" ${isStock?'':'readonly style="color:#999;width:90px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;"'} onchange="editHoldingsData[${i}].name=this.value"></td>
+            <td><input value="${row.code}" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;" ${isStock?'':'readonly style="color:#999;width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;"'} onchange="editHoldingsData[${i}].code=this.value"></td>
+            <td><input type="number" value="${row.qty}" style="width:70px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;" onchange="editHoldingsData[${i}].qty=this.value"></td>
+            <td><input type="number" step="0.01" value="${row.cost}" style="width:70px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;" onchange="editHoldingsData[${i}].cost=this.value"></td>
+            <td><input value="${escapeHtml(row.note)}" style="width:90px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;" onchange="editHoldingsData[${i}].note=this.value"></td>
+        </tr>`;
+    }).join("");
+}
+
+function addEditRow(type) {
+    editHoldingsData.push({
+        type: type || "股票",
+        account: type === "cash" ? "A股主账户" : "A股主账户",
+        name: "",
+        code: "",
+        qty: "",
+        cost: "",
+        note: "",
+    });
+    if (type === "cash") editHoldingsData[editHoldingsData.length-1].type = "现金";
+    renderEditTable();
+}
+
+function deleteEditRow(idx) {
+    editHoldingsData[idx]._deleted = true;
+    renderEditTable();
+}
+
+async function saveEditHoldings() {
+    const btn = document.getElementById("saveHoldingsBtn");
+    btn.disabled = true; btn.textContent = "💾 保存中...";
+
+    // 过滤删除行和空行
+    const valid = editHoldingsData.filter(r => !r._deleted && r.name && r.name.trim());
+    const payload = valid.map(r => ({
+        类别: r.type,
+        账户: r.account,
+        名称: r.name.trim(),
+        代码: r.code.trim(),
+        数量: r.qty ? parseFloat(r.qty) : (r.type === "现金" ? 0 : null),
+        成本价: r.cost ? parseFloat(r.cost) : null,
+        备注: r.note,
+    }));
+
+    try {
+        const res = await fetch("/api/holdings-save", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ holdings: payload })
+        });
+        const data = await res.json();
+        if (data.success) {
+            hideEditHoldings();
+            // 刷新页面数据
+            refreshData();
+        } else {
+            alert("保存失败: " + (data.error || "未知错误"));
+        }
+    } catch(e) {
+        alert("保存失败: " + e.message);
+    }
+    btn.disabled = false; btn.textContent = "💾 保存";
+}
+
+// 股票代码映射（用于编辑持仓自动补全）
+const STOCK_CODES = {
+    "科达利": "002850",
+    "三花智控": "002050",
+    "拓普集团": "601689",
+    "立讯精密": "002475",
+    "五粮液": "000858",
+    "天齐锂业": "002466",
+    "元隆雅图": "002878",
+};
 
 // ============ 工具 ============
 function escapeHtml(t) {

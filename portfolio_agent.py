@@ -93,6 +93,84 @@ def load_portfolio():
     return holdings
 
 
+def save_holdings(holdings_data):
+    """保存持仓数据到 Excel（用户手动编辑用）
+    holdings_data: list of dicts with keys: 类别, 账户, 名称, 代码, 数量, 成本价, 现价, 备注
+    """
+    try:
+        wb = openpyxl.load_workbook(EXCEL_PATH)
+        ws_old = wb["持仓表"]
+        price_map = {}
+        for row in ws_old.iter_rows(min_row=2, values_only=True):
+            if row[0] == "股票" and row[2] and row[6]:
+                price_map[str(row[2]).strip()] = row[6]
+        wb.close()
+    except Exception:
+        price_map = {}
+
+    new_holdings = []
+    for d in holdings_data:
+        name = d["名称"]
+        qty = d.get("数量") or 0
+        cost = d.get("成本价") or 0
+        price = d.get("现价") or price_map.get(name, cost)
+
+        if d["类别"] == "股票":
+            if qty > 0 and cost > 0:
+                market_value = round(qty * price, 2)
+                cost_total = round(qty * cost, 2)
+                pnl = round(market_value - cost_total, 2)
+                return_pct = round(pnl / cost_total, 4) if cost_total > 0 else 0
+            else:
+                market_value = 0; pnl = 0; return_pct = 0
+        elif d["类别"] == "现金":
+            market_value = d.get("市值") or (qty if qty else 0)
+            pnl = 0; return_pct = 0; cost = None
+        else:
+            market_value = qty * price if qty and price else 0
+            pnl = 0; return_pct = 0
+
+        new_holdings.append({
+            "类别": d["类别"], "账户": d["账户"], "名称": name,
+            "代码": d.get("代码", ""), "数量": qty, "成本价": cost,
+            "现价": price, "市值": market_value, "盈亏": pnl,
+            "收益率": return_pct, "仓位占比": 0, "备注": d.get("备注", ""),
+        })
+
+    total_stock_value = sum(h["市值"] for h in new_holdings
+        if h["类别"] == "股票" and h["账户"] != "账户二（短线）")
+    for h in new_holdings:
+        if h["类别"] == "股票" and h["账户"] != "账户二（短线）" and total_stock_value > 0:
+            h["仓位占比"] = round(h["市值"] / total_stock_value, 4)
+        elif h["类别"] == "现金":
+            h["仓位占比"] = 0
+
+    wb = openpyxl.load_workbook(EXCEL_PATH)
+    ws = wb["持仓表"]
+    while ws.max_row > 1:
+        ws.delete_rows(2)
+    for i, h in enumerate(new_holdings, 2):
+        ws.cell(row=i, column=1, value=h["类别"])
+        ws.cell(row=i, column=2, value=h["账户"])
+        ws.cell(row=i, column=3, value=h["名称"])
+        ws.cell(row=i, column=4, value=h["代码"])
+        ws.cell(row=i, column=5, value=h["数量"] if h["数量"] else None)
+        ws.cell(row=i, column=6, value=h["成本价"] if h["成本价"] else None)
+        ws.cell(row=i, column=7, value=h["现价"] if h["现价"] else None)
+        ws.cell(row=i, column=8, value=h["市值"] if h["市值"] else None)
+        ws.cell(row=i, column=9, value=h["盈亏"] if h["盈亏"] else None)
+        ws.cell(row=i, column=10, value=h["收益率"] if h["收益率"] else None)
+        ws.cell(row=i, column=11, value=h["仓位占比"] if h["仓位占比"] else None)
+        ws.cell(row=i, column=12, value=h["备注"] if h["备注"] else None)
+    tr = len(new_holdings) + 2
+    ws.cell(row=tr, column=1, value="合计")
+    ws.cell(row=tr, column=8, value=sum(h["市值"] for h in new_holdings))
+    ws.cell(row=tr, column=9, value=sum(h["盈亏"] for h in new_holdings))
+    wb.save(EXCEL_PATH)
+    wb.close()
+    return load_portfolio()
+
+
 def save_prices(holdings):
     """将更新后的价格写回 Excel"""
     wb = openpyxl.load_workbook(EXCEL_PATH)
