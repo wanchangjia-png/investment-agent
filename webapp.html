@@ -667,20 +667,53 @@ async function loadBreakeven() {
                     <div class="be-detail-item"><div class="lbl">需涨</div><div class="val">${s.rise_needed>0?s.rise_needed.toFixed(1):'0'}%</div></div>
                 </div>`;
 
-            // 预估回本时间
+            // 预估回本时间（交易日天数）
             const sc = s.scenarios || {};
             const keys = Object.keys(sc);
             if (keys.length > 0) {
                 html += `<div class="be-scenarios"><div class="row">`;
                 for (const k of keys) {
-                    html += `<div class="scenario"><div class="lbl">${k}</div><div class="val">${sc[k]}</div></div>`;
+                    const days = sc[k].days;
+                    let display;
+                    if (days >= 252) {
+                        display = (days/252).toFixed(1) + '年';
+                    } else if (days >= 22) {
+                        display = Math.round(days/22) + '个月';
+                    } else {
+                        display = days + '天';
+                    }
+                    // 精确天数在tooltip
+                    html += `<div class="scenario" title="${days}个交易日"><div class="lbl">${sc[k].label}</div><div class="val">${display}</div></div>`;
                 }
-                html += `</div><div style="text-align:center;color:#999;margin-top:6px;font-size:11px;">基于月涨幅预估，仅供参考</div></div>`;
+                html += `</div><div style="text-align:center;color:#999;margin-top:6px;font-size:11px;">基于日涨幅预估，约22个交易日/月</div>`;
+
+                // 加仓分析
+                const add = s.add_analysis;
+                if (add && add.cost_reduction < 0) {
+                    const oldDays = sc.moderate ? sc.moderate.days : 0;
+                    const newRiseNeeded = add.new_rise_needed;
+                    // 保守估计加仓后节省天数
+                    const savedDays = oldDays > 0 ? Math.round(oldDays - newRiseNeeded / (3/22)) : 0;
+                    html += `<div style="margin-top:8px;padding:8px 10px;background:#f0f7ff;border-radius:6px;font-size:12px;">
+                        <div style="font-weight:600;color:#2F5496;margin-bottom:4px;">📈 加仓分析（加1手=${add.add_qty}股）</div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;">
+                            <span>追加成本：<b>${add.add_cost.toLocaleString()}元</b></span>
+                            <span>新均价：<b>${add.new_avg_cost}元</b>（降${Math.abs(add.cost_reduction).toFixed(2)}元）</span>
+                            <span>需涨：<b>${add.new_rise_needed}%</b>（原${s.rise_needed}%）</span>
+                            <span>${savedDays > 0 ? '预计缩短 <b>约' + Math.round(savedDays/22) + '个月</b>' : ''}</span>
+                        </div>
+                        <div style="margin-top:4px;color:#666;">
+                            ${add.cost_reduction < -1
+                                ? '✅ 当前价低于均价' + Math.abs(add.cost_reduction).toFixed(2) + '元，加仓可有效降低成本，加速回本'
+                                : 'ℹ️ 加仓降低成本效果有限，建议观望'}
+                        </div>
+                    </div>`;
+                }
+                html += `</div>`;
             } else if (s.pnl >= 0) {
                 html += `<div class="be-already">✅ 已回本，当前盈利 ${s.pnl.toFixed(0)} 元</div>`;
+                html += `</div>`;
             }
-
-            html += `</div>`;
         }
 
         container.innerHTML = html;

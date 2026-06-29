@@ -557,7 +557,7 @@ def risk_analysis(holdings):
 
 
 def breakeven_analysis(holdings):
-    """分析每只股票的盈亏进度和预估回本时间"""
+    """分析每只股票的盈亏进度和预估回本时间（交易日天数），加仓分析"""
     results = []
     for h in holdings:
         if h["类别"] != "股票" or not h.get("数量"):
@@ -573,22 +573,48 @@ def breakeven_analysis(holdings):
         pnl = round(total_value - total_cost, 2)
         return_pct = (total_cost - total_value) / total_cost * 100
 
-        # 回本进度 = 现价/成本价 (0.8 = 还差20%)
+        # 回本进度 = 现价/成本价
         be_progress = round(price / cost * 100, 1)
 
         # 还需涨多少才能回本
         rise_needed = (cost / price - 1) * 100 if price > 0 else 0
 
-        # 按不同月涨幅情景预估回本时间（月）
+        # 按日涨幅预估回本时间（交易日，月均约22天）
         scenarios = {}
-        for label, monthly_rise in [("乐观 +5%/月", 5), ("中性 +3%/月", 3), ("保守 +1%/月", 1)]:
-            if monthly_rise > 0 and rise_needed > 0:
-                months = rise_needed / monthly_rise
-                years = months / 12
-                if years >= 1:
-                    scenarios[label] = f"{years:.1f}年"
-                else:
-                    scenarios[label] = f"{months:.0f}个月"
+        for label, desc, daily_rise in [
+            ("optimistic", "乐观 +5%/月", 5 / 22),
+            ("moderate", "中性 +3%/月", 3 / 22),
+            ("conservative", "保守 +1%/月", 1 / 22),
+        ]:
+            if daily_rise > 0 and rise_needed > 0:
+                days = round(rise_needed / daily_rise)
+                scenarios[label] = {"label": desc, "days": days}
+
+        # 加仓分析：加1手（100股）能降低多少成本
+        add_qty = 100
+        new_qty = qty + add_qty
+        new_total_cost = round(total_cost + price * add_qty, 2)
+        new_avg_cost = round(new_total_cost / new_qty, 2)
+        new_rise_needed = (new_avg_cost / price - 1) * 100 if price > 0 else 0
+        cost_reduction = round(cost - new_avg_cost, 2)
+
+        # 加仓后的回本时间缩短
+        add_scenarios = {}
+        for label, daily_rise in [("optimistic", 5 / 22), ("moderate", 3 / 22), ("conservative", 1 / 22)]:
+            if daily_rise > 0 and new_rise_needed > 0:
+                days_new = round(new_rise_needed / daily_rise)
+                old_days = scenarios.get(label, {}).get("days", 0)
+                saved = old_days - days_new if old_days > 0 else 0
+                add_scenarios[label] = days_new
+
+        total_add_cost = round(price * add_qty, 2)
+        add_analysis = {
+            "add_qty": add_qty,
+            "add_cost": total_add_cost,
+            "new_avg_cost": new_avg_cost,
+            "cost_reduction": cost_reduction,
+            "new_rise_needed": round(new_rise_needed, 1),
+        }
 
         results.append({
             "name": h["名称"],
@@ -603,6 +629,7 @@ def breakeven_analysis(holdings):
             "be_progress": be_progress,
             "rise_needed": round(rise_needed, 1),
             "scenarios": scenarios,
+            "add_analysis": add_analysis,
         })
     return results
 
