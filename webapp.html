@@ -805,8 +805,17 @@ async function loadAiAddAdvice(name, sector, qty, cost, price, cash, resultId, b
 
 // ============ 编辑持仓 ============
 let editHoldingsData = [];
+let editHoldingsUnlocked = false;
 
 function showEditHoldings() {
+    if (!editHoldingsUnlocked) {
+        const pwd = prompt("请输入编辑密码：");
+        if (pwd !== "9804") {
+            alert("密码错误！");
+            return;
+        }
+        editHoldingsUnlocked = true;
+    }
     const modal = document.getElementById("editHoldingsModal");
     modal.classList.add("show");
     // 从已有数据加载
