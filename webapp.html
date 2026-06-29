@@ -687,27 +687,62 @@ async function loadBreakeven() {
                 }
                 html += `</div><div style="text-align:center;color:#999;margin-top:6px;font-size:11px;">基于日涨幅预估，约22个交易日/月</div>`;
 
-                // 加仓分析
-                const add = s.add_analysis;
-                if (add && add.cost_reduction < 0) {
-                    const oldDays = sc.moderate ? sc.moderate.days : 0;
-                    const newRiseNeeded = add.new_rise_needed;
-                    // 保守估计加仓后节省天数
-                    const savedDays = oldDays > 0 ? Math.round(oldDays - newRiseNeeded / (3/22)) : 0;
-                    html += `<div style="margin-top:8px;padding:8px 10px;background:#f0f7ff;border-radius:6px;font-size:12px;">
-                        <div style="font-weight:600;color:#2F5496;margin-bottom:4px;">📈 加仓分析（加1手=${add.add_qty}股）</div>
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;">
-                            <span>追加成本：<b>${add.add_cost.toLocaleString()}元</b></span>
-                            <span>新均价：<b>${add.new_avg_cost}元</b>（降${Math.abs(add.cost_reduction).toFixed(2)}元）</span>
-                            <span>需涨：<b>${add.new_rise_needed}%</b>（原${s.rise_needed}%）</span>
-                            <span>${savedDays > 0 ? '预计缩短 <b>约' + Math.round(savedDays/22) + '个月</b>' : ''}</span>
-                        </div>
-                        <div style="margin-top:4px;color:#666;">
-                            ${add.cost_reduction < -1
-                                ? '✅ 当前价低于均价' + Math.abs(add.cost_reduction).toFixed(2) + '元，加仓可有效降低成本，加速回本'
-                                : 'ℹ️ 加仓降低成本效果有限，建议观望'}
-                        </div>
-                    </div>`;
+                // 加仓建议
+                const rec = s.recommendation;
+                if (rec && rec.discount_depth > 0) {
+                    // 推荐横幅
+                    if (rec.should_add) {
+                        html += `<div style="margin-top:10px;padding:10px 12px;background:#e8f5e9;border-radius:8px;border-left:4px solid #4CAF50;font-size:13px;">
+                            <div style="font-weight:600;color:#2e7d32;margin-bottom:4px;">✅ 建议加仓 · ${rec.timing}</div>
+                            <div style="color:#555;font-size:12px;">${rec.reason}</div>
+                            <div style="display:flex;gap:16px;margin-top:6px;font-size:12px;color:#555;flex-wrap:wrap;">
+                                <span>折价深度: <b>${rec.discount_depth}%</b></span>
+                                <span>可用现金: <b>${rec.cash_available.toLocaleString()}元</b></span>
+                                <span>建议加仓: <b>${rec.best_lots}手</b></span>
+                                <span>所需资金: <b>${rec.cash_needed.toLocaleString()}元</b></span>
+                                <span style="color:${rec.cash_sufficient?'#2e7d32':'#f44336'}">${rec.cash_sufficient?'✅ 资金充足':'⚠️ 资金不足'}</span>
+                            </div>
+                        </div>`;
+                    } else {
+                        html += `<div style="margin-top:10px;padding:10px 12px;background:#fff8e1;border-radius:8px;border-left:4px solid #FFC000;font-size:13px;">
+                            <div style="font-weight:600;color:#f57f17;margin-bottom:4px;">⏸️ ${rec.timing}</div>
+                            <div style="color:#555;font-size:12px;">${rec.reason}</div>
+                            <div style="display:flex;gap:16px;margin-top:6px;font-size:12px;color:#555;flex-wrap:wrap;">
+                                <span>折价深度: <b>${rec.discount_depth}%</b></span>
+                                <span>可用现金: <b>${rec.cash_available.toLocaleString()}元</b></span>
+                            </div>
+                        </div>`;
+                    }
+
+                    // 多档对比
+                    const tiers = s.tiers || [];
+                    if (tiers.length > 0) {
+                        html += `<div style="margin-top:8px;font-size:12px;">
+                            <div style="font-weight:600;color:#999;margin-bottom:4px;">加仓方案对比</div>
+                            <table style="width:100%;border-collapse:collapse;font-size:11px;">
+                                <thead><tr>
+                                    <th style="text-align:left;padding:4px 6px;background:#f5f5f5;">方案</th>
+                                    <th style="text-align:right;padding:4px 6px;background:#f5f5f5;">追加</th>
+                                    <th style="text-align:right;padding:4px 6px;background:#f5f5f5;">新均价</th>
+                                    <th style="text-align:right;padding:4px 6px;background:#f5f5f5;">需涨</th>
+                                    <th style="text-align:right;padding:4px 6px;background:#f5f5f5;">缩短</th>
+                                </tr></thead>
+                                <tbody>`;
+                        for (const t of tiers) {
+                            const savedDays = t.scenarios && t.scenarios.moderate ? t.scenarios.moderate.saved : 0;
+                            const savedDisplay = savedDays >= 22
+                                ? '约' + Math.round(savedDays/22) + '个月'
+                                : savedDays + '天';
+                            html += `<tr style="${t.lots === rec.best_lots && rec.should_add ? 'background:#e8f5e9;font-weight:600;' : ''}">
+                                <td style="padding:4px 6px;border-bottom:1px solid #eee;">${t.lots}手(${t.add_qty}股)</td>
+                                <td style="padding:4px 6px;border-bottom:1px solid #eee;text-align:right;">${t.add_cost.toLocaleString()}</td>
+                                <td style="padding:4px 6px;border-bottom:1px solid #eee;text-align:right;">${t.new_avg_cost}元</td>
+                                <td style="padding:4px 6px;border-bottom:1px solid #eee;text-align:right;">${t.new_rise_needed}%</td>
+                                <td style="padding:4px 6px;border-bottom:1px solid #eee;text-align:right;color:#2e7d32;">${savedDays > 0 ? '缩短' + savedDisplay : '-'}</td>
+                            </tr>`;
+                        }
+                        html += `</tbody></table></div>`;
+                    }
                 }
                 html += `</div></div>`;
             } else if (s.pnl >= 0) {

@@ -385,7 +385,8 @@ def api_advice():
 def api_breakeven():
     """返回回本分析"""
     holdings = agent.load_portfolio()
-    return {"stocks": agent.breakeven_analysis(holdings)}
+    cash = sum(h["市值"] for h in holdings if h["类别"] == "现金")
+    return {"stocks": agent.breakeven_analysis(holdings, cash)}
 
 
 # ============ HTTP 服务器 ============
