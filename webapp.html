@@ -833,6 +833,18 @@ async function loadBreakeven() {
             </div>
         </div>`;
 
+        // 板块映射
+        const sectorMap = {
+            "科达利": "新能源车（锂电池结构件）",
+            "三花智控": "新能源车（热管理）",
+            "拓普集团": "新能源车（底盘系统）",
+            "天齐锂业": "新能源车（上游锂矿）",
+            "立讯精密": "消费电子/科技",
+            "五粮液": "白酒/消费",
+            "元隆雅图": "文化传媒/促销品",
+        };
+        const getSector = name => sectorMap[name] || "其他";
+
         // 每只股票
         for (const s of stocks) {
             const progress = s.be_progress;
@@ -875,21 +887,19 @@ async function loadBreakeven() {
                 }
                 html += `</div><div style="text-align:center;color:#999;margin-top:6px;font-size:11px;">基于日涨幅预估，约22个交易日/月</div>`;
 
+                // AI 实时回本预估
+                const aiBeId = "aiBe-" + s.name;
+                html += `<div style="margin-top:6px;text-align:center;">
+                    <button class="btn btn-sm" style="background:#fff0f0;color:#CC0000;border:1px solid #ffcccc;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;" onclick="loadAiBreakeven('${s.name}','${getSector(s.name)}',${s.cost},${s.price},'${aiBeId}',this)">🤖 实时回本预估</button>
+                </div>
+                <div id="${aiBeId}" style="margin-top:6px;"></div>`;
+
                 // AI 加仓分析
                 const rec = s.recommendation;
-                const sectorMap = {
-                    "科达利": "新能源车（锂电池结构件）",
-                    "三花智控": "新能源车（热管理）",
-                    "拓普集团": "新能源车（底盘系统）",
-                    "天齐锂业": "新能源车（上游锂矿）",
-                    "立讯精密": "消费电子/科技",
-                    "五粮液": "白酒/消费",
-                    "元隆雅图": "文化传媒/促销品",
-                };
                 const aiResultId = "aiResult-" + s.name;
                 const cashAvail = rec ? rec.cash_available : 0;
                 html += `<div style="margin-top:8px;text-align:center;">
-                    <button class="btn btn-sm btn-green" onclick="loadAiAddAdvice('${s.name}','${sectorMap[s.name]||'其他'}',${s.qty},${s.cost},${s.price},${cashAvail},'${aiResultId}',this)">🤖 AI 加仓分析</button>
+                    <button class="btn btn-sm btn-green" onclick="loadAiAddAdvice('${s.name}','${getSector(s.name)}',${s.qty},${s.cost},${s.price},${cashAvail},'${aiResultId}',this)">🤖 AI 加仓分析</button>
                 </div>
                 <div id="${aiResultId}" style="margin-top:6px;"></div>`;
                 html += `</div></div>`;
@@ -903,6 +913,58 @@ async function loadBreakeven() {
     } catch(e) {
         container.innerHTML = `<div class="empty-state">⚠️ 加载失败</div>`;
     }
+}
+
+// ============ AI 实时回本预估 ============
+async function loadAiBreakeven(name, sector, cost, price, resultId, btn) {
+    const resultDiv = document.getElementById(resultId);
+    if (!resultDiv) return;
+    btn.disabled = true;
+    btn.textContent = '🤖 分析中...';
+    resultDiv.innerHTML = '<div style="text-align:center;padding:8px;"><span class="spinner"></span> 搜索市场信息并分析...</div>';
+    try {
+        const res = await fetch("/api/breakeven-realistic", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ name, sector, cost, price })
+        });
+        const data = await res.json();
+        if (data.error || !data.scenarios) {
+            resultDiv.innerHTML = `<div style="padding:8px 10px;background:#fff0f0;border-radius:6px;font-size:12px;color:#CC0000;">⚠️ ${data.error || '分析失败'}</div>`;
+            btn.disabled = false;
+            btn.textContent = '🤖 实时回本预估';
+            return;
+        }
+        const sc = data.scenarios;
+        const keys = Object.keys(sc);
+        const riseNeeded = data.rise_needed;
+        let html = `<div style="padding:8px 10px;background:#fff0f0;border-radius:8px;font-size:12px;">
+            <div style="font-weight:600;color:#CC0000;margin-bottom:4px;">🤖 AI 实时回本预估（基于最新市场消息）</div>
+            <div class="row" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">`;
+        for (const k of keys) {
+            const s = sc[k];
+            const days = s.days;
+            let display;
+            if (days >= 252) display = (days/252).toFixed(1) + '年';
+            else if (days >= 22) display = Math.round(days/22) + '个月';
+            else display = days + '天';
+            html += `<div style="background:#fff;padding:6px 10px;border-radius:6px;text-align:center;min-width:80px;">
+                <div style="color:#999;font-size:10px;">${s.label}</div>
+                <div style="font-weight:600;font-size:14px;color:#CC0000;">${display}</div>
+                <div style="color:#666;font-size:10px;">月涨 ${s.monthly_rise}%</div>
+            </div>`;
+        }
+        html += `</div>`;
+        // 理由
+        const reasons = keys.map(k => `<span style="color:#555;font-size:11px;">${sc[k].label}: ${sc[k].reason}</span>`).join('<br>');
+        html += `<div style="margin-top:4px;color:#999;font-size:10px;">${reasons}</div>`;
+        html += `<div style="margin-top:2px;font-size:10px;color:#bbb;">点击刷新重新获取最新判断</div></div>`;
+        resultDiv.innerHTML = html;
+    } catch(e) {
+        resultDiv.innerHTML = `<div style="padding:8px 10px;background:#fff0f0;border-radius:6px;font-size:12px;color:#CC0000;">⚠️ 请求失败: ${e.message}</div>`;
+    }
+    btn.disabled = false;
+    btn.textContent = '🤖 实时回本预估';
 }
 
 // ============ AI 加仓分析 ============

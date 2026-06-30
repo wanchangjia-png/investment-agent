@@ -397,6 +397,83 @@ def api_kline():
         return {"error": str(e), "data": {}}
 
 
+def api_breakeven_realistic(data):
+    """AI分析某只股票基于市场行情的真实回本预估"""
+    name = data.get("name", "")
+    sector = data.get("sector", "")
+    cost = data.get("cost", 0)
+    price = data.get("price", 0)
+    rise_needed = (cost / price - 1) * 100 if price > 0 else 0
+    if not name or not sector:
+        return {"error": "参数不全"}
+
+    api_key = LLM_CONFIG["api_key"]
+    if not api_key:
+        return {"scenarios": None, "error": "未配置 API Key"}
+
+    provider = LLM_CONFIG["provider"]
+    model = LLM_CONFIG["model"]
+    endpoint = LLM_ENDPOINTS.get(provider, LLM_ENDPOINTS["deepseek"])
+
+    # 搜索市场消息
+    queries = [f"{name} 股票 走势 分析 {datetime.now().strftime('%Y-%m')}", f"{sector} 板块 行情 展望"]
+    news = []
+    for q in queries:
+        for r in web_search(q, 4):
+            news.append(f"- [{r['title']}] {r['snippet']}")
+    context = "\n".join(news[:8]) or "无搜索结果"
+
+    prompt = f"""你是A股技术分析师。分析以下股票的合理回本预期。
+
+股票：{name}
+板块：{sector}
+成本价：{cost}元
+现价：{price}元（需涨 {rise_needed:.1f}% 回本）
+
+## 最新市场信息
+{context}
+
+## 请基于以上市场信息，输出三个场景的合理月涨幅预估（纯JSON）：
+{{{{
+  "optimistic": {{"monthly_rise": 数字, "reason": "简析"}},
+  "moderate": {{"monthly_rise": 数字, "reason": "简析"}},
+  "conservative": {{"monthly_rise": 数字, "reason": "简析"}}
+}}}}
+
+要求：
+- 每月涨幅基于真实市场情况（板块热度、个股消息等）
+- optimistic 3-8%，moderate 1-4%，conservative 0.3-1.5%
+- reason 用一句话说明判断依据
+- 输出纯JSON，不要其他文字"""
+
+    messages = [
+        {"role": "system", "content": "你输出纯JSON，不要任何其他文字。"},
+        {"role": "user", "content": prompt},
+    ]
+
+    try:
+        req_body = json.dumps({"model": model, "messages": messages, "stream": False, "max_tokens": 1024, "temperature": 0.3}).encode()
+        req = urllib.request.Request(endpoint, data=req_body, headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}, method="POST")
+        resp = urllib.request.urlopen(req, timeout=60)
+        result = json.loads(resp.read().decode("utf-8"))
+        content = result["choices"][0]["message"]["content"]
+        m = re.search(r'\{.*\}', content, re.DOTALL)
+        scenarios = json.loads(m.group()) if m else json.loads(content)
+
+        # 计算回本天数
+        out = {}
+        for k, v in scenarios.items():
+            mr = v["monthly_rise"]
+            if mr > 0 and rise_needed > 0:
+                days = round(rise_needed / (mr / 22))
+            else:
+                days = 999
+            out[k] = {"label": k, "days": days, "monthly_rise": mr, "reason": v.get("reason", "")}
+        return {"scenarios": out, "rise_needed": round(rise_needed, 1), "name": name}
+    except Exception as e:
+        return {"error": str(e), "scenarios": None}
+
+
 def api_add_position_advice(data):
     """AI 分析某只股票是否应该加仓，基于市场消息和行情"""
     stock_name = data.get("name", "")
@@ -618,6 +695,13 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                 self._send_json({"success": True})
             except Exception as e:
                 self._send_json({"success": False, "error": str(e)}, 500)
+
+        elif self.path == "/api/breakeven-realistic":
+            try:
+                result = api_breakeven_realistic(data)
+                self._send_json(result)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
 
         else:
             self._send_json({"error": "not found"}, 404)
