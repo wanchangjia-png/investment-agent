@@ -146,7 +146,7 @@ tr:hover { background: #f8f9ff; }
     .main-layout { flex-direction: column; overflow: visible; }
     .left-panel { overflow: visible; }
     .chat-panel { width: 100%; height: 70vh; }
-    .kpi-row { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+    .kpi-row { grid-template-columns: repeat(2, 1fr) !important; gap: 6px; }
     .kpi-card { padding: 8px 10px; }
     .kpi-card .value { font-size: 17px; }
     .accounts-row { grid-template-columns: 1fr; }
@@ -200,15 +200,18 @@ tr:hover { background: #f8f9ff; }
 <div class="main-layout" id="mainLayout">
     <!-- ===== 左面板 ===== -->
     <div class="left-panel" id="leftPanel">
-        <div class="kpi-row" id="kpiRow">
+        <div class="kpi-row" id="kpiRow" style="grid-template-columns:repeat(5,1fr);">
             <div class="kpi-card"><div class="label">总资产</div><div class="value" id="kpiTotal">--</div><div class="sub">元</div></div>
             <div class="kpi-card"><div class="label">累计盈亏</div><div class="value" id="kpiPnl">--</div><div class="sub" id="kpiReturn">--</div></div>
+            <div class="kpi-card"><div class="label">今日盈亏</div><div class="value" id="kpiToday">--</div><div class="sub" id="kpiTodaySub">--</div></div>
             <div class="kpi-card" onclick="switchTab('risks')"><div class="label">风险项</div><div class="value" id="kpiRisk">--</div><div class="sub" id="kpiRiskLabel">待处理</div></div>
-        </div>
-        <div class="kpi-row" id="kpiRow2" style="margin-top:0;">
             <div class="kpi-card"><div class="label">股票</div><div class="value" id="kpiCount">--</div><div class="sub">只</div></div>
-            <div class="kpi-card"><div class="label">现金</div><div class="value" id="kpiCash" style="color:#70AD47;">--</div><div class="sub">可用资金</div></div>
+        </div>
+        <div class="kpi-row" id="kpiRow2" style="grid-template-columns:repeat(4,1fr);margin-top:0;">
+            <div class="kpi-card"><div class="label" id="kpiAcct1Label">主账户</div><div class="value" id="kpiAcct1">--</div><div class="sub" id="kpiAcct1Pnl">--</div></div>
             <div class="kpi-card"><div class="label">黄金</div><div class="value" id="kpiGold" style="color:#FFC000;">--</div><div class="sub">市值</div></div>
+            <div class="kpi-card"><div class="label" id="kpiAcct2Label">账户二</div><div class="value" id="kpiAcct2">--</div><div class="sub" id="kpiAcct2Pnl">--</div></div>
+            <div class="kpi-card"><div class="label">现金</div><div class="value" id="kpiCash" style="color:#70AD47;">--</div><div class="sub">可用资金</div></div>
         </div>
 
         <div class="accounts-row" id="accountsRow"></div>
@@ -452,12 +455,42 @@ function render() {
     retEl.style.color = d.total_return_pct >= 0 ? "#CC0000" : "#009900";
     document.getElementById("kpiCount").textContent = d.stocks.length;
 
-    // 现金
-    const cashVal = (d.allocation && d.allocation["现金"]) || 0;
-    document.getElementById("kpiCash").textContent = cashVal.toLocaleString();
+    // 今日盈亏（对比上次净值记录）
+    const hist = d.history || [];
+    if (hist.length > 0) {
+        const lastTotal = hist[hist.length - 1].total;
+        const todayPnl = d.total_value - lastTotal;
+        const todayEl = document.getElementById("kpiToday");
+        todayEl.textContent = (todayPnl >= 0 ? "+" : "") + todayPnl.toLocaleString();
+        todayEl.className = "value " + (todayPnl >= 0 ? "up" : "down");
+        document.getElementById("kpiTodaySub").textContent = "较上次记录";
+    } else {
+        document.getElementById("kpiToday").textContent = "--";
+        document.getElementById("kpiTodaySub").textContent = "暂无记录";
+    }
+
+    // 第二排：主账户 / 黄金 / 账户二 / 现金
+    const accts = d.accounts || {};
+    // 主账户
+    const acct1 = accts["A股主账户"];
+    if (acct1) {
+        document.getElementById("kpiAcct1").textContent = acct1.value.toLocaleString();
+        document.getElementById("kpiAcct1Pnl").textContent = (acct1.pnl >= 0 ? "+" : "") + acct1.pnl.toLocaleString();
+        document.getElementById("kpiAcct1Pnl").style.color = acct1.pnl >= 0 ? "#CC0000" : "#009900";
+    }
+    // 账户二（短线）
+    const acct2 = accts["账户二（短线）"] || accts["账户二"];
+    if (acct2) {
+        document.getElementById("kpiAcct2").textContent = acct2.value.toLocaleString();
+        document.getElementById("kpiAcct2Pnl").textContent = (acct2.pnl >= 0 ? "+" : "") + acct2.pnl.toLocaleString();
+        document.getElementById("kpiAcct2Pnl").style.color = acct2.pnl >= 0 ? "#CC0000" : "#009900";
+    }
     // 黄金
     const goldVal = (d.allocation && d.allocation["黄金"]) || 0;
     document.getElementById("kpiGold").textContent = goldVal.toLocaleString();
+    // 现金
+    const cashVal = (d.allocation && d.allocation["现金"]) || 0;
+    document.getElementById("kpiCash").textContent = cashVal.toLocaleString();
 
     // 风险 KPI
     try { fetch("/api/advice").then(r=>r.json()).then(r=>{
