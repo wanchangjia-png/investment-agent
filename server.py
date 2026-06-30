@@ -94,6 +94,14 @@ def save_config_sheet(key, value):
 
 _read_config_sheet()
 
+def _portfolio_summary():
+    """生成简短持仓概况字符串"""
+    h = agent.load_portfolio()
+    tv, tp, accts = agent.calculate(h)
+    cash = sum(x["市值"] for x in h if x["类别"] == "现金")
+    stocks_str = ", ".join(f"{x['名称']}{x['数量']}股" for x in h if x["类别"] == "股票")
+    return f"总资产{tv:,.0f}元 | 现金{cash:,.0f}元 | 累计盈亏{tp:+,.0f}元 | 持仓: {stocks_str}"
+
 
 def _build_system_prompt():
     """构建包含持仓上下文的 system prompt"""
@@ -522,7 +530,12 @@ def api_add_position_advice(data):
 
     rise_needed = (cost_price / current_price - 1) * 100 if current_price > 0 else 0
 
+    portfolio_summary = _portfolio_summary()
+
     prompt = f"""你是专业的A股投资顾问。请分析以下持仓是否应该加仓。
+
+## 万万整体持仓
+{portfolio_summary}
 
 ## 持仓信息
 - 股票：{stock_name}
