@@ -73,7 +73,7 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .kpi-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; flex-shrink: 0; }
 .kpi-card { background: #fff; border-radius: 10px; padding: 12px 16px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); cursor: pointer; }
 .kpi-card .label { font-size: 12px; color: #888; }
-.kpi-card .value { font-size: 22px; font-weight: 700; margin: 2px 0; }
+.kpi-card .value { font-size: 18px; font-weight: 700; margin: 2px 0; }
 .kpi-card .sub { font-size: 12px; }
 .up { color: #CC0000; } .down { color: #009900; }
 
@@ -208,13 +208,11 @@ tr:hover { background: #f8f9ff; }
             <div class="kpi-card"><div class="label">股票</div><div class="value" id="kpiCount">--</div><div class="sub">只</div></div>
         </div>
         <div class="kpi-row" id="kpiRow2" style="grid-template-columns:repeat(4,1fr);margin-top:0;">
-            <div class="kpi-card"><div class="label" id="kpiAcct1Label">主账户</div><div class="value" id="kpiAcct1">--</div><div class="sub" id="kpiAcct1Pnl">--</div></div>
-            <div class="kpi-card"><div class="label">黄金</div><div class="value" id="kpiGold" style="color:#FFC000;">--</div><div class="sub">市值</div></div>
-            <div class="kpi-card"><div class="label" id="kpiAcct2Label">账户二</div><div class="value" id="kpiAcct2">--</div><div class="sub" id="kpiAcct2Pnl">--</div></div>
-            <div class="kpi-card"><div class="label">现金</div><div class="value" id="kpiCash" style="color:#70AD47;">--</div><div class="sub">可用资金</div></div>
+            <div class="kpi-card"><div class="label">A股主账户</div><div class="value" id="kpiAcct1" style="font-size:18px;">--</div><div class="sub" id="kpiAcct1Pnl">--</div></div>
+            <div class="kpi-card"><div class="label">黄金</div><div class="value" id="kpiGold" style="color:#FFC000;font-size:18px;">--</div><div class="sub">市值</div></div>
+            <div class="kpi-card"><div class="label">账户二（短线）</div><div class="value" id="kpiAcct2" style="font-size:18px;">--</div><div class="sub" id="kpiAcct2Pnl">--</div></div>
+            <div class="kpi-card"><div class="label">现金</div><div class="value" id="kpiCash" style="color:#70AD47;font-size:18px;">--</div><div class="sub">可用资金</div></div>
         </div>
-
-        <div class="accounts-row" id="accountsRow"></div>
 
         <div style="flex:1;display:flex;flex-direction:column;min-height:0;">
             <div class="tab-bar">
@@ -503,11 +501,6 @@ function render() {
             return `<div class="risk-item ${cls}"><div class="level">${ri.level}</div><div class="issue">${ri.issue}</div><div class="suggestion">→ ${ri.suggestion}</div></div>`;
         }).join("");
     }).catch(()=>{}); } catch(e) {}
-
-    // 账户
-    document.getElementById("accountsRow").innerHTML = Object.entries(d.accounts).map(([n,a]) =>
-        `<div class="account-card"><div class="name">${n}</div><div class="value">${a.value.toLocaleString()}</div><div class="pnl ${a.pnl>=0?'up':'down'}">${a.pnl>=0?"+":""}${a.pnl.toLocaleString()}</div></div>`
-    ).join("");
 
     // 持仓表
     const body = document.getElementById("holdingsBody");
