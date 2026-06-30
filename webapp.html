@@ -1054,9 +1054,20 @@ function cancelPwd() {
 function openEditModal() {
     const modal = document.getElementById("editHoldingsModal");
     modal.classList.add("show");
-    // 从已有数据加载
+    // 从完整原始数据加载（含股票、黄金、现金）
     const d = state.data;
-    if (d && d.stocks) {
+    if (d && d.holdings_raw) {
+        editHoldingsData = d.holdings_raw.map(h => ({
+            type: h.type,
+            account: h.account,
+            name: h.name,
+            code: h.code || "",
+            qty: h.qty !== null && h.qty !== undefined ? h.qty : "",
+            cost: h.cost !== null && h.cost !== undefined ? h.cost : "",
+            note: h.note || "",
+        }));
+    } else if (d && d.stocks) {
+        // 降级方案：只有 stocks 数据
         editHoldingsData = d.stocks.map(s => ({
             type: "股票",
             account: s.account || "A股主账户",
@@ -1067,9 +1078,6 @@ function openEditModal() {
             note: "",
         }));
     }
-    // 加现金行
-    const cashVal = document.getElementById("kpiTotal").textContent.replace(/,/g,"");
-    editHoldingsData.push({ type: "现金", account: "A股主账户", name: "可用资金", code: "", qty: "", cost: "", note: "账户余额" });
     renderEditTable();
 }
 

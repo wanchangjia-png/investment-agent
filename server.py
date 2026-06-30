@@ -331,6 +331,19 @@ def api_data():
         t = h["类别"]
         by_type[t] = by_type.get(t, 0) + h["市值"]
 
+    # 完整原始数据（包含黄金、现金等，供编辑弹窗使用）
+    raw_holdings = []
+    for h in holdings:
+        raw_holdings.append({
+            "type": h["类别"],
+            "account": h["账户"],
+            "name": h["名称"],
+            "code": h.get("代码", ""),
+            "qty": h["数量"],
+            "cost": h["成本价"],
+            "note": h.get("备注", ""),
+        })
+
     return {
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "total_value": total_value,
@@ -340,6 +353,7 @@ def api_data():
         "accounts": {k: {"value": v["市值"], "pnl": v["盈亏"]} for k, v in accounts.items()},
         "allocation": {k: v for k, v in sorted(by_type.items(), key=lambda x: -x[1])},
         "history": [{"date": r["日期"], "total": r["总资产"], "pnl": r["累计盈亏"]} for r in history],
+        "holdings_raw": raw_holdings,
     }
 
 
