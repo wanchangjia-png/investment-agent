@@ -966,9 +966,10 @@ function showStockDetail(name) {
     document.getElementById("stockDetailInfo").innerHTML = `板块: <b>${sector}</b>${s.pnl<0?` · <span style="color:#009900;">需涨 ${needRise}% 回本</span>`:''} · ${s.qty||0}股 ${s.qty>=100?Math.floor(s.qty/100)+'手':''}`;
 
     // AI 按钮
+    const totalCash = (d.allocation && d.allocation["现金"]) || 0;
     document.getElementById("stockDetailActions").innerHTML = `
         <button class="btn btn-sm" style="background:#fff0f0;color:#CC0000;border:1px solid #ffcccc;font-size:11px;padding:4px 10px;" onclick="loadAiBreakeven('${s.name}','${sector}',${s.cost},${s.price},'stockDetailAiBe',this)">🤖 回本预估</button>
-        <button class="btn btn-sm btn-green" style="font-size:11px;padding:4px 10px;" onclick="loadAiAddAdvice('${s.name}','${sector}',${s.qty},${s.cost},${s.price},0,'stockDetailAiAdd',this)">🤖 加仓分析</button>`;
+        <button class="btn btn-sm btn-green" style="font-size:11px;padding:4px 10px;" onclick="loadAiAddAdvice('${s.name}','${sector}',${s.qty},${s.cost},${s.price},${totalCash},'stockDetailAiAdd',this)">🤖 加仓分析</button>`;
 
     // 清理旧 AI 结果
     document.getElementById("stockDetailAiBe").innerHTML = "";
