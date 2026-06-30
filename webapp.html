@@ -413,9 +413,17 @@ tr:hover { background: #f8f9ff; }
 <div class="modal-overlay" id="stockDetailModal">
     <div class="modal" style="width:560px;max-width:92vw;">
         <button class="close-btn" onclick="hideStockDetail()">&times;</button>
-        <h2 id="stockDetailName" style="font-size:18px;">--</h2>
-        <div id="stockDetailBody" style="font-size:13px;line-height:1.8;max-height:65vh;overflow-y:auto;">
-            <div class="empty-state"><span class="spinner"></span> 加载中...</div>
+        <h2 id="stockDetailName" style="font-size:17px;">--</h2>
+        <div id="stockDetailBody" style="max-height:68vh;overflow-y:auto;padding:0 2px;">
+            <div id="stockDetailTop" style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px;"></div>
+            <div id="stockDetailPnl" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;"></div>
+            <div id="stockDetailChart" style="position:relative;height:160px;margin-bottom:8px;background:#fafbfc;border-radius:8px;">
+                <canvas id="stockKlineChart"></canvas>
+            </div>
+            <div id="stockDetailInfo" style="font-size:12px;color:#555;margin-bottom:8px;"></div>
+            <div id="stockDetailActions" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;"></div>
+            <div id="stockDetailAiBe" style="font-size:12px;margin-bottom:6px;"></div>
+            <div id="stockDetailAiAdd" style="font-size:12px;"></div>
         </div>
         <div class="modal-actions">
             <button class="btn btn-outline" onclick="hideStockDetail()">关闭</button>
@@ -907,70 +915,125 @@ function hideEditHistory() {
 }
 
 // ============ 个股详情 ============
+let stockKlineChart = null;
+
 function showStockDetail(name) {
     const d = state.data;
     if (!d || !d.stocks) return;
     const s = d.stocks.find(x => x.name === name);
     if (!s) return;
 
-    document.getElementById("stockDetailName").textContent = `${s.name}`;
+    document.getElementById("stockDetailName").textContent = s.name;
     const sectorMap = {"科达利":"新能源车","三花智控":"新能源车","拓普集团":"新能源车","天齐锂业":"新能源车","立讯精密":"消费电子","五粮液":"白酒","元隆雅图":"文化传媒"};
     const sector = sectorMap[name] || "其他";
-    const pc = s.pnl>=0?"up":"down";
-
     const needRise = s.pnl < 0 ? ((s.cost - s.price) / s.price * 100).toFixed(1) : '0';
+    const pnlColor = s.pnl>=0?'#CC0000':'#009900';
 
-    document.getElementById("stockDetailBody").innerHTML = `
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px;">
-            <div style="background:#f8f9ff;padding:10px;border-radius:8px;">
-                <div style="color:#999;font-size:11px;">现价</div>
-                <div style="font-size:20px;font-weight:700;">${s.price?s.price.toFixed(2):'-'}</div>
-            </div>
-            <div style="background:#f8f9ff;padding:10px;border-radius:8px;">
-                <div style="color:#999;font-size:11px;">成本</div>
-                <div style="font-size:20px;font-weight:700;">${s.cost?s.cost.toFixed(2):'-'}</div>
-            </div>
-            <div style="background:#f8f9ff;padding:10px;border-radius:8px;">
-                <div style="color:#999;font-size:11px;">持股</div>
-                <div style="font-size:20px;font-weight:700;">${s.qty||0}股</div>
-                <div style="font-size:11px;color:#888;">${s.qty>=100?Math.floor(s.qty/100)+'手':''}</div>
-            </div>
-            <div style="background:#f8f9ff;padding:10px;border-radius:8px;">
-                <div style="color:#999;font-size:11px;">市值</div>
-                <div style="font-size:20px;font-weight:700;">${s.market_value?s.market_value.toLocaleString():'-'}</div>
-            </div>
+    // 顶部四格
+    document.getElementById("stockDetailTop").innerHTML = `
+        <div style="background:#f8f9ff;padding:8px;border-radius:6px;text-align:center;">
+            <div style="color:#999;font-size:10px;">现价</div>
+            <div style="font-size:18px;font-weight:700;">${s.price?s.price.toFixed(2):'-'}</div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
-            <div style="padding:8px;border-radius:6px;background:${s.pnl>=0?'#f0fff0':'#fff0f0'};">
-                <div style="color:#999;font-size:11px;">盈亏</div>
-                <div style="font-size:16px;font-weight:700;color:${s.pnl>=0?'#CC0000':'#009900'};">${s.pnl>=0?'+':''}${s.pnl?s.pnl.toLocaleString():'-'}</div>
-                <div style="font-size:12px;color:${s.pnl>=0?'#CC0000':'#009900'};">${s.return_pct>=0?'+':''}${s.return_pct}%</div>
-            </div>
-            <div style="padding:8px;border-radius:6px;background:#f8f9ff;">
-                <div style="color:#999;font-size:11px;">占比</div>
-                <div style="font-size:16px;font-weight:700;">${s.alloc_pct}%</div>
-                <div style="font-size:12px;color:#888;">${s.account||'-'}</div>
-            </div>
+        <div style="background:#f8f9ff;padding:8px;border-radius:6px;text-align:center;">
+            <div style="color:#999;font-size:10px;">成本</div>
+            <div style="font-size:18px;font-weight:700;">${s.cost?s.cost.toFixed(2):'-'}</div>
         </div>
-        <div style="margin-top:10px;padding:8px;background:#f8f9ff;border-radius:6px;font-size:12px;color:#555;">
-            板块: <b>${sector}</b>
-            ${s.pnl<0?` · 需回本涨幅: <b style="color:#009900;">${needRise}%</b>`:''}
+        <div style="background:#f8f9ff;padding:8px;border-radius:6px;text-align:center;">
+            <div style="color:#999;font-size:10px;">持股</div>
+            <div style="font-size:18px;font-weight:700;">${s.qty||0}</div>
+            <div style="font-size:10px;color:#888;">${s.qty>=100?Math.floor(s.qty/100)+'手':''}</div>
         </div>
-        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-            <button class="btn btn-sm" style="background:#fff0f0;color:#CC0000;border:1px solid #ffcccc;" onclick="loadAiBreakeven('${s.name}','${sector}',${s.cost},${s.price},'stockDetailAiBe',this);hideStockDetailAfter=true">🤖 回本预估</button>
-            <button class="btn btn-sm btn-green" onclick="loadAiAddAdvice('${s.name}','${sector}',${s.qty},${s.cost},${s.price},0,'stockDetailAiAdd',this);hideStockDetailAfter=true">🤖 加仓分析</button>
+        <div style="background:#f8f9ff;padding:8px;border-radius:6px;text-align:center;">
+            <div style="color:#999;font-size:10px;">市值</div>
+            <div style="font-size:18px;font-weight:700;">${s.market_value?s.market_value.toLocaleString():'-'}</div>
+        </div>`;
+
+    // 盈亏 + 信息
+    document.getElementById("stockDetailPnl").innerHTML = `
+        <div style="padding:8px;border-radius:6px;background:${s.pnl>=0?'#f0fff0':'#fff0f0'};">
+            <div style="color:#999;font-size:10px;">盈亏</div>
+            <div style="font-size:16px;font-weight:700;color:${pnlColor};">${s.pnl>=0?'+':''}${s.pnl?s.pnl.toLocaleString():'-'}</div>
+            <div style="font-size:11px;color:${pnlColor};">${s.return_pct>=0?'+':''}${s.return_pct}%</div>
         </div>
-        <div id="stockDetailAiBe" style="margin-top:6px;"></div>
-        <div id="stockDetailAiAdd" style="margin-top:6px;"></div>
-    `;
+        <div style="padding:8px;border-radius:6px;background:#f8f9ff;">
+            <div style="color:#999;font-size:10px;">占比 · 账户</div>
+            <div style="font-size:16px;font-weight:700;">${s.alloc_pct}%</div>
+            <div style="font-size:11px;color:#888;">${s.account||'-'}</div>
+        </div>`;
+
+    // 板块信息
+    document.getElementById("stockDetailInfo").innerHTML = `板块: <b>${sector}</b>${s.pnl<0?` · <span style="color:#009900;">需涨 ${needRise}% 回本</span>`:''} · ${s.qty||0}股 ${s.qty>=100?Math.floor(s.qty/100)+'手':''}`;
+
+    // AI 按钮
+    document.getElementById("stockDetailActions").innerHTML = `
+        <button class="btn btn-sm" style="background:#fff0f0;color:#CC0000;border:1px solid #ffcccc;font-size:11px;padding:4px 10px;" onclick="loadAiBreakeven('${s.name}','${sector}',${s.cost},${s.price},'stockDetailAiBe',this)">🤖 回本预估</button>
+        <button class="btn btn-sm btn-green" style="font-size:11px;padding:4px 10px;" onclick="loadAiAddAdvice('${s.name}','${sector}',${s.qty},${s.cost},${s.price},0,'stockDetailAiAdd',this)">🤖 加仓分析</button>`;
+
+    // 清理旧 AI 结果
+    document.getElementById("stockDetailAiBe").innerHTML = "";
+    document.getElementById("stockDetailAiAdd").innerHTML = "";
+
+    // K线图
+    loadStockKline(name);
+
     document.getElementById("stockDetailModal").classList.add("show");
 }
 
 function hideStockDetail() {
     document.getElementById("stockDetailModal").classList.remove("show");
-    // 清理 AI 结果，下次打开重新加载
-    document.getElementById("stockDetailAiBe").innerHTML = "";
-    document.getElementById("stockDetailAiAdd").innerHTML = "";
+    if (stockKlineChart) { stockKlineChart.destroy(); stockKlineChart = null; }
+}
+
+async function loadStockKline(name) {
+    let data = klineDataCache[name];
+    if (!data) {
+        try {
+            const res = await fetch("/api/kline");
+            const result = await res.json();
+            klineDataCache = result.data || {};
+            data = klineDataCache[name];
+        } catch(e) {}
+    }
+    if (!data || data.length < 2) {
+        document.getElementById("stockDetailChart").innerHTML = '<div style="text-align:center;line-height:160px;color:#ccc;font-size:12px;">暂无K线数据</div>';
+        return;
+    }
+    document.getElementById("stockDetailChart").innerHTML = '<canvas id="stockKlineChart"></canvas>';
+    const ctx = document.getElementById("stockKlineChart");
+    if (!ctx) return;
+    if (stockKlineChart) stockKlineChart.destroy();
+
+    const closes = data.map(d => d.close);
+    const firstClose = closes[0], lastClose = closes[closes.length-1];
+    const change = (lastClose - firstClose) / firstClose * 100;
+
+    stockKlineChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: data.map(d => d.date),
+            datasets: [{
+                data: closes,
+                borderColor: change >= 0 ? '#CC0000' : '#009900',
+                backgroundColor: change >= 0 ? 'rgba(204,0,0,0.08)' : 'rgba(0,153,0,0.08)',
+                fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1.5,
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: { enabled: false },
+            },
+            scales: {
+                x: { display: false },
+                y: { display: true, position: 'right',
+                    ticks: { font: {size:9}, maxTicksLimit:4 },
+                    grid: { color: '#f0f0f0' }
+                }
+            }
+        }
+    });
 }
 
 // ============ 回本分析 ============
