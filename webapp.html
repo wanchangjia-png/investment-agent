@@ -339,6 +339,9 @@ tr:hover { background: #f8f9ff; }
             <button class="btn btn-outline" onclick="hideSettings()">取消</button>
             <button class="btn btn-primary" onclick="saveSettings()">保存</button>
         </div>
+        <div style="margin-top:16px;padding-top:14px;border-top:1px solid #eee;">
+            <button class="btn btn-sm btn-outline" onclick="showEditHistory()">📋 查看编辑记录</button>
+        </div>
     </div>
 </div>
 
@@ -383,6 +386,20 @@ tr:hover { background: #f8f9ff; }
         <div class="modal-actions" style="margin-top:14px;">
             <button class="btn btn-outline" onclick="cancelPwd()">取消</button>
             <button class="btn btn-primary" onclick="submitPwd()">确认</button>
+        </div>
+    </div>
+</div>
+
+<!-- 编辑记录弹窗 -->
+<div class="modal-overlay" id="editHistoryModal">
+    <div class="modal" style="width:600px;max-width:92vw;">
+        <button class="close-btn" onclick="hideEditHistory()">&times;</button>
+        <h2>📋 编辑记录</h2>
+        <div style="max-height:400px;overflow-y:auto;" id="editHistoryContainer">
+            <div class="empty-state"><span class="spinner"></span> 加载中...</div>
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-outline" onclick="hideEditHistory()">关闭</button>
         </div>
     </div>
 </div>
@@ -797,6 +814,29 @@ function updateModelHint() {
         sel.innerHTML = `<option value="gpt-4o">GPT-4o</option><option value="gpt-4o-mini">GPT-4o-mini</option>`;
         hint.textContent = "需要 OpenAI API Key";
     }
+}
+
+// ============ 编辑记录 ============
+async function showEditHistory() {
+    document.getElementById("editHistoryModal").classList.add("show");
+    const container = document.getElementById("editHistoryContainer");
+    container.innerHTML = '<div class="empty-state"><span class="spinner"></span> 加载中...</div>';
+    try {
+        const res = await fetch("/api/edit-history");
+        const data = await res.json();
+        const logs = data.logs || [];
+        if (logs.length === 0) {
+            container.innerHTML = '<div class="empty-state"><div class="icon">📋</div><div>暂无编辑记录</div></div>';
+            return;
+        }
+        container.innerHTML = `<table style="font-size:12px;"><thead><tr><th style="width:140px;">时间</th><th>改动内容</th></tr></thead><tbody>${logs.map(l => `<tr><td style="white-space:nowrap;color:#888;">${l.time}</td><td>${escapeHtml(l.detail)}</td></tr>`).join('')}</tbody></table>`;
+    } catch(e) {
+        container.innerHTML = '<div class="empty-state">⚠️ 加载失败</div>';
+    }
+}
+
+function hideEditHistory() {
+    document.getElementById("editHistoryModal").classList.remove("show");
 }
 
 // ============ 回本分析 ============

@@ -99,6 +99,9 @@ def save_holdings(holdings_data):
     """保存持仓数据到 Excel（用户手动编辑用）
     holdings_data: list of dicts with keys: 类别, 账户, 名称, 代码, 数量, 成本价, 现价, 备注
     """
+    # 加载旧数据用于改动对比
+    old_holdings = load_portfolio()
+
     try:
         wb = openpyxl.load_workbook(EXCEL_PATH)
         ws_old = wb["持仓表"]
@@ -168,9 +171,87 @@ def save_holdings(holdings_data):
     ws.cell(row=tr, column=1, value="合计")
     ws.cell(row=tr, column=8, value=sum(h["市值"] for h in new_holdings))
     ws.cell(row=tr, column=9, value=sum(h["盈亏"] for h in new_holdings))
+
+    # 记录编辑日志
+    _log_edit(old_holdings, new_holdings, wb)
+
     wb.save(EXCEL_PATH)
     wb.close()
     return load_portfolio()
+
+
+def _log_edit(old_holdings, new_holdings, wb):
+    """比较新旧持仓，记录改动到编辑记录 sheet"""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # 构建 key → item 映射
+    def key(h): return (h["类别"], h["账户"], h["名称"])
+    old_map = {key(h): h for h in old_holdings if h["名称"]}
+    new_map = {key(h): h for h in new_holdings if h["名称"]}
+
+    changes = []
+    # 找出新增和修改
+    for k, nh in new_map.items():
+        oh = old_map.get(k)
+        if not oh:
+            if nh["类别"] == "股票":
+                changes.append(f"新增 {nh['类别']} {nh['名称']} {int(nh['数量'])}股@{nh['成本价']}元")
+            elif nh["类别"] == "现金":
+                changes.append(f"新增 {nh['类别']} {nh['账户']} {nh['市值']}元")
+            elif nh["类别"] == "黄金":
+                changes.append(f"新增 {nh['类别']} {nh['数量']}g@{nh['成本价']}元")
+            else:
+                changes.append(f"新增 {nh['类别']} {nh['名称']}")
+        else:
+            parts = []
+            if oh["数量"] != nh["数量"]:
+                parts.append(f"数量 {oh['数量']}→{nh['数量']}")
+            if oh["成本价"] != nh["成本价"]:
+                parts.append(f"成本 {oh['成本价']}→{nh['成本价']}")
+            if oh["市值"] != nh["市值"] and nh["类别"] == "现金":
+                parts.append(f"金额 {oh['市值']}→{nh['市值']}")
+            if parts:
+                changes.append(f"修改 {nh['类别']} {nh['名称']}: {' '.join(parts)}")
+
+    # 找出删除
+    for k, oh in old_map.items():
+        if k not in new_map:
+            changes.append(f"删除 {oh['类别']} {oh['名称']}")
+
+    if not changes:
+        changes.append("无改动")
+
+    # 确保 sheet 存在
+    if "编辑记录" not in wb.sheetnames:
+        wb.create_sheet("编辑记录", 0)
+        ws = wb["编辑记录"]
+        ws.append(["时间", "改动内容"])
+    else:
+        ws = wb["编辑记录"]
+
+    ws.append([now, "；".join(changes)])
+    # 列宽
+    ws.column_dimensions["A"].width = 20
+    ws.column_dimensions["B"].width = 80
+
+
+def load_edit_log():
+    """读取编辑记录"""
+    try:
+        wb = openpyxl.load_workbook(EXCEL_PATH)
+        if "编辑记录" not in wb.sheetnames:
+            wb.close()
+            return []
+        ws = wb["编辑记录"]
+        logs = []
+        for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True)):
+            if row[0] is None:
+                continue
+            logs.append({"time": str(row[0]), "detail": str(row[1]) if row[1] else ""})
+        wb.close()
+        return logs
+    except Exception:
+        return []
 
 
 def save_prices(holdings):

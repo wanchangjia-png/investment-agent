@@ -699,6 +699,13 @@ class PortfolioHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
+        elif self.path == "/api/edit-history":
+            try:
+                logs = agent.load_edit_log()
+                self._send_json({"logs": logs})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
         elif self.path == "/api/holdings-save":
             try:
                 holdings_data = data.get("holdings", [])
