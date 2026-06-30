@@ -341,6 +341,7 @@ def api_data():
             "code": h.get("代码", ""),
             "qty": h["数量"],
             "cost": h["成本价"],
+            "market_value": h.get("市值", 0),
             "note": h.get("备注", ""),
         })
 
