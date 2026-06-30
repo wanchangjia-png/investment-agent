@@ -454,7 +454,6 @@ function render() {
     // 现金
     const cashVal = (d.allocation && d.allocation["现金"]) || 0;
     document.getElementById("kpiCash").textContent = cashVal.toLocaleString();
-    document.getElementById("kpiCashAccount").textContent = "可用资金";
 
     // 风险 KPI
     try { fetch("/api/advice").then(r=>r.json()).then(r=>{
