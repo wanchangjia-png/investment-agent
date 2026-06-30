@@ -209,7 +209,7 @@ tr:hover { background: #f8f9ff; }
         </div>
         <div class="kpi-row" id="kpiRow2" style="grid-template-columns:repeat(4,1fr);margin-top:0;">
             <div class="kpi-card"><div class="label">A股主账户</div><div class="value" id="kpiAcct1" style="font-size:18px;">--</div><div class="sub" id="kpiAcct1Pnl">--</div></div>
-            <div class="kpi-card"><div class="label">黄金</div><div class="value" id="kpiGold" style="color:#FFC000;font-size:18px;">--</div><div class="sub">市值</div></div>
+            <div class="kpi-card"><div class="label">黄金</div><div class="value" id="kpiGold" style="color:#FFC000;font-size:18px;">--</div><div class="sub" id="kpiGoldPnl">--</div></div>
             <div class="kpi-card"><div class="label">账户二（短线）</div><div class="value" id="kpiAcct2" style="font-size:18px;">--</div><div class="sub" id="kpiAcct2Pnl">--</div></div>
             <div class="kpi-card"><div class="label">现金</div><div class="value" id="kpiCash" style="color:#70AD47;font-size:18px;">--</div><div class="sub">可用资金</div></div>
         </div>
@@ -486,6 +486,12 @@ function render() {
     // 黄金
     const goldVal = (d.allocation && d.allocation["黄金"]) || 0;
     document.getElementById("kpiGold").textContent = goldVal.toLocaleString();
+    const goldAcct = accts["黄金"];
+    if (goldAcct) {
+        const goldPnlEl = document.getElementById("kpiGoldPnl");
+        goldPnlEl.textContent = (goldAcct.pnl >= 0 ? "+" : "") + goldAcct.pnl.toLocaleString();
+        goldPnlEl.style.color = goldAcct.pnl >= 0 ? "#CC0000" : "#009900";
+    }
     // 现金
     const cashVal = (d.allocation && d.allocation["现金"]) || 0;
     document.getElementById("kpiCash").textContent = cashVal.toLocaleString();
