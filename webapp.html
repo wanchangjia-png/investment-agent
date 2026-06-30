@@ -453,18 +453,26 @@ function render() {
     retEl.style.color = d.total_return_pct >= 0 ? "#CC0000" : "#009900";
     document.getElementById("kpiCount").textContent = d.stocks.length;
 
-    // 今日盈亏（对比上次净值记录）
+    // 今日盈亏（较前日净值记录）
     const hist = d.history || [];
-    if (hist.length > 0) {
-        const lastTotal = hist[hist.length - 1].total;
-        const todayPnl = d.total_value - lastTotal;
+    const todayStr = new Date().toLocaleDateString('en-CA');
+    // 找前一个交易日（最晚的不是今天的记录）
+    let prevTotal = null;
+    for (let i = hist.length - 1; i >= 0; i--) {
+        if (hist[i].date !== todayStr) {
+            prevTotal = hist[i].total;
+            break;
+        }
+    }
+    if (prevTotal !== null) {
+        const todayPnl = d.total_value - prevTotal;
         const todayEl = document.getElementById("kpiToday");
         todayEl.textContent = (todayPnl >= 0 ? "+" : "") + todayPnl.toLocaleString();
         todayEl.className = "value " + (todayPnl >= 0 ? "up" : "down");
-        document.getElementById("kpiTodaySub").textContent = "较上次记录";
+        document.getElementById("kpiTodaySub").textContent = "较前日";
     } else {
         document.getElementById("kpiToday").textContent = "--";
-        document.getElementById("kpiTodaySub").textContent = "暂无记录";
+        document.getElementById("kpiTodaySub").textContent = "暂无前日记录";
     }
 
     // 第二排：主账户 / 黄金 / 账户二 / 现金
