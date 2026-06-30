@@ -75,18 +75,20 @@ def load_portfolio():
     for row in ws.iter_rows(min_row=2, values_only=True):
         if row[0] is None or (isinstance(row[0], str) and row[0] == "合计"):
             break
+        def _n(v):
+            return v if isinstance(v, (int, float)) else 0
         holdings.append({
             "类别": row[0] or "",
             "账户": row[1] or "",
             "名称": row[2] or "",
             "代码": row[3] or "",
-            "数量": row[4] if row[4] != "" else 0,
-            "成本价": row[5] if row[5] != "" else 0,
-            "现价": row[6] if row[6] != "" else 0,
-            "市值": row[7] if row[7] != "" else 0,
-            "盈亏": row[8] if row[8] != "" else 0,
-            "收益率": row[9] if row[9] != "" else 0,
-            "仓位占比": row[10] if row[10] != "" else 0,
+            "数量": _n(row[4]),
+            "成本价": _n(row[5]),
+            "现价": _n(row[6]),
+            "市值": _n(row[7]),
+            "盈亏": _n(row[8]),
+            "收益率": _n(row[9]),
+            "仓位占比": _n(row[10]),
             "备注": row[11] or "",
         })
     wb.close()
@@ -154,13 +156,13 @@ def save_holdings(holdings_data):
         ws.cell(row=i, column=2, value=h["账户"])
         ws.cell(row=i, column=3, value=h["名称"])
         ws.cell(row=i, column=4, value=h["代码"])
-        ws.cell(row=i, column=5, value=h["数量"] if h["数量"] else None)
-        ws.cell(row=i, column=6, value=h["成本价"] if h["成本价"] else None)
-        ws.cell(row=i, column=7, value=h["现价"] if h["现价"] else None)
-        ws.cell(row=i, column=8, value=h["市值"] if h["市值"] else None)
-        ws.cell(row=i, column=9, value=h["盈亏"] if h["盈亏"] else None)
-        ws.cell(row=i, column=10, value=h["收益率"] if h["收益率"] else None)
-        ws.cell(row=i, column=11, value=h["仓位占比"] if h["仓位占比"] else None)
+        ws.cell(row=i, column=5, value=h["数量"] if h["数量"] is not None else None)
+        ws.cell(row=i, column=6, value=h["成本价"] if h["成本价"] is not None else None)
+        ws.cell(row=i, column=7, value=h["现价"] if h["现价"] is not None else None)
+        ws.cell(row=i, column=8, value=h["市值"] if h["市值"] is not None else None)
+        ws.cell(row=i, column=9, value=h["盈亏"] if h["盈亏"] is not None else None)
+        ws.cell(row=i, column=10, value=h["收益率"] if h["收益率"] is not None else None)
+        ws.cell(row=i, column=11, value=h["仓位占比"] if h["仓位占比"] is not None else None)
         ws.cell(row=i, column=12, value=h["备注"] if h["备注"] else None)
     tr = len(new_holdings) + 2
     ws.cell(row=tr, column=1, value="合计")
@@ -365,16 +367,14 @@ def calculate(holdings):
     total_cost = 0
 
     for h in holdings:
+        mv = h.get("市值") or 0
+        pnl = h.get("盈亏") or 0
         if h["类别"] in ("股票",):
-            mv = h["市值"]
-            pnl = h["盈亏"]
             total_market_value += mv
             total_pnl += pnl
         elif h["类别"] == "现金":
-            total_market_value += h["市值"]
+            total_market_value += mv
         elif h["类别"] == "黄金":
-            mv = h["市值"]
-            pnl = h["盈亏"]
             total_market_value += mv
             total_pnl += pnl
 
@@ -384,8 +384,8 @@ def calculate(holdings):
         acct = h["账户"]
         if acct not in accounts:
             accounts[acct] = {"市值": 0, "盈亏": 0}
-        accounts[acct]["市值"] += h["市值"]
-        accounts[acct]["盈亏"] += h["盈亏"]
+        accounts[acct]["市值"] += h.get("市值") or 0
+        accounts[acct]["盈亏"] += h.get("盈亏") or 0
 
     return total_market_value, total_pnl, accounts
 
