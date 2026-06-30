@@ -458,11 +458,11 @@ def api_breakeven_realistic(data):
 要求：
 - 每月涨幅基于真实市场情况（板块热度、个股消息等）
 - optimistic 3-8%，moderate 1-4%，conservative 0.3-1.5%
-- reason 用一句话说明判断依据
+- reason 用一句话说明判断依据，必须用中文
 - 输出纯JSON，不要其他文字"""
 
     messages = [
-        {"role": "system", "content": "你输出纯JSON，不要任何其他文字。"},
+        {"role": "system", "content": "你必须用中文回复，输出纯JSON，不要任何其他文字。"},
         {"role": "user", "content": prompt},
     ]
 
@@ -483,7 +483,8 @@ def api_breakeven_realistic(data):
                 days = round(rise_needed / (mr / 22))
             else:
                 days = 999
-            out[k] = {"label": k, "days": days, "monthly_rise": mr, "reason": v.get("reason", "")}
+            label_map = {"optimistic":"乐观","moderate":"中性","conservative":"保守"}
+            out[k] = {"label": label_map.get(k, k), "days": days, "monthly_rise": mr, "reason": v.get("reason", "")}
         return {"scenarios": out, "rise_needed": round(rise_needed, 1), "name": name}
     except Exception as e:
         return {"error": str(e), "scenarios": None}
@@ -547,7 +548,7 @@ def api_add_position_advice(data):
 }}}}"""
 
     messages = [
-        {"role": "system", "content": "你是严谨的A股投资顾问，总是基于最新市场信息做判断。输出纯 JSON，不要任何其他文字。"},
+        {"role": "system", "content": "你是严谨的A股投资顾问，总是基于最新市场信息做判断。必须用中文，输出纯 JSON，不要任何其他文字。"},
         {"role": "user", "content": prompt},
     ]
 
