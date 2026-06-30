@@ -464,9 +464,11 @@ def calculate(holdings):
     for h in holdings:
         acct = h["账户"]
         if acct not in accounts:
-            accounts[acct] = {"市值": 0, "盈亏": 0}
+            accounts[acct] = {"市值": 0, "盈亏": 0, "股票市值": 0}
         accounts[acct]["市值"] += h.get("市值") or 0
         accounts[acct]["盈亏"] += h.get("盈亏") or 0
+        if h["类别"] == "股票":
+            accounts[acct]["股票市值"] += h.get("市值") or 0
 
     return total_market_value, total_pnl, accounts
 

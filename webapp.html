@@ -469,10 +469,11 @@ function render() {
 
     // 第二排：主账户 / 黄金 / 账户二 / 现金
     const accts = d.accounts || {};
-    // 主账户
+    // 主账户（仅股票市值，不含现金）
     const acct1 = accts["A股主账户"];
     if (acct1) {
-        document.getElementById("kpiAcct1").textContent = acct1.value.toLocaleString();
+        const stockVal = acct1.stock_value || acct1.value;
+        document.getElementById("kpiAcct1").textContent = stockVal.toLocaleString();
         document.getElementById("kpiAcct1Pnl").textContent = (acct1.pnl >= 0 ? "+" : "") + acct1.pnl.toLocaleString();
         document.getElementById("kpiAcct1Pnl").style.color = acct1.pnl >= 0 ? "#CC0000" : "#009900";
     }
@@ -1155,6 +1156,17 @@ function openEditModal() {
                 note: h.note || "",
             };
         });
+        // 检查每个有股票的账户是否有现金行，没有则补充
+        const stockAccounts = new Set(editHoldingsData.filter(r => r.type === "股票").map(r => r.account));
+        const cashAccounts = new Set(editHoldingsData.filter(r => r.type === "现金").map(r => r.account));
+        for (const acct of stockAccounts) {
+            if (!cashAccounts.has(acct)) {
+                editHoldingsData.push({
+                    type: "现金", account: acct, name: "可用资金",
+                    code: "", qty: "", cost: "", note: "账户余额",
+                });
+            }
+        }
     } else if (d && d.stocks) {
         // 降级方案：只有 stocks 数据
         editHoldingsData = d.stocks.map(s => ({
