@@ -714,6 +714,8 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                 if prices:
                     result = agent.update_holdings_with_prices(result, prices)
                     agent.save_prices(result)
+                # 同步到 GitHub，防止 Railway 部署时数据丢失
+                agent.sync_portfolio_to_github()
                 self._send_json({"success": True})
             except Exception as e:
                 self._send_json({"success": False, "error": str(e)}, 500)

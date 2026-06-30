@@ -1114,3 +1114,53 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def sync_portfolio_to_github():
+    """将 portfolio.xlsx 同步到 GitHub 仓库（通过 API），防止 Railway 部署时丢失"""
+    import base64
+    import json
+    import urllib.request
+
+    token = os.environ.get("GH_TOKEN")
+    if not token:
+        print("⚠️ GH_TOKEN 未设置，跳过 GitHub 同步")
+        return False
+
+    repo = "wanchangjia-png/investment-agent"
+    path = "portfolio.xlsx"
+    url = f"https://api.github.com/repos/{repo}/contents/{path}"
+
+    with open(EXCEL_PATH, "rb") as f:
+        content = base64.b64encode(f.read()).decode("utf-8")
+
+    try:
+        req = urllib.request.Request(url, headers={
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "investment-agent",
+            "Accept": "application/vnd.github.v3+json",
+        })
+        resp = urllib.request.urlopen(req, timeout=15)
+        sha = json.loads(resp.read().decode("utf-8"))["sha"]
+    except Exception as e:
+        print(f"⚠️ 获取 GitHub 文件 SHA 失败: {e}")
+        return False
+
+    try:
+        data = json.dumps({
+            "message": f"auto-sync portfolio.xlsx {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            "content": content,
+            "sha": sha,
+        }).encode("utf-8")
+        req = urllib.request.Request(url, data=data, method="PUT", headers={
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "investment-agent",
+            "Content-Type": "application/json",
+            "Accept": "application/vnd.github.v3+json",
+        })
+        resp = urllib.request.urlopen(req, timeout=15)
+        print("✅ portfolio.xlsx 已同步到 GitHub")
+        return True
+    except Exception as e:
+        print(f"⚠️ GitHub 同步失败: {e}")
+        return False
