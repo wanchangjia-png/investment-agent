@@ -273,7 +273,13 @@ def save_prices(holdings):
 def save_networth_snapshot(total, pnl, detail):
     """保存净值快照到净值历史表（只在15:00收盘后记录，一天一次）
     返回 True=已记录, False=跳过"""
-    now = datetime.now()
+    # 使用北京时间 (UTC+8)
+    try:
+        from datetime import timezone, timedelta
+        tz = timezone(timedelta(hours=8))
+        now = datetime.now(tz)
+    except Exception:
+        now = datetime.now()
     market_closed = now.hour > 15 or (now.hour == 15 and now.minute >= 0)
     if not market_closed:
         print(f"ℹ️  当前 {now.strftime('%H:%M')}，A股未收盘（15:00），跳过净值记录")
