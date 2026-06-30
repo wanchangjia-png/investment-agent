@@ -227,8 +227,15 @@ tr:hover { background: #f8f9ff; }
 
             <div class="tab-content active" id="tabHoldings">
                 <div class="table-wrap"><table><thead><tr>
-                    <th>名称</th><th>账户</th><th>持股</th><th>现价</th><th>成本</th>
-                    <th class="num">市值</th><th class="num">盈亏</th><th class="num">收益率</th><th class="num">占比</th>
+                    <th onclick="sortBy('name')" style="cursor:pointer;">名称 <span class="sort-arrow"></span></th>
+                    <th onclick="sortBy('account')" style="cursor:pointer;">账户 <span class="sort-arrow"></span></th>
+                    <th onclick="sortBy('qty')" style="cursor:pointer;">持股 <span class="sort-arrow"></span></th>
+                    <th onclick="sortBy('price')" style="cursor:pointer;">现价 <span class="sort-arrow"></span></th>
+                    <th onclick="sortBy('cost')" style="cursor:pointer;">成本 <span class="sort-arrow"></span></th>
+                    <th class="num" onclick="sortBy('market_value')" style="cursor:pointer;">市值 <span class="sort-arrow"></span></th>
+                    <th class="num" onclick="sortBy('pnl')" style="cursor:pointer;">盈亏 <span class="sort-arrow"></span></th>
+                    <th class="num" onclick="sortBy('return_pct')" style="cursor:pointer;">收益率 <span class="sort-arrow"></span></th>
+                    <th class="num" onclick="sortBy('alloc_pct')" style="cursor:pointer;">占比 <span class="sort-arrow"></span></th>
                 </tr></thead><tbody id="holdingsBody"></tbody></table></div>
                 <div id="holdingsEmpty" class="empty-state" style="display:none;"><div class="icon">📭</div><div>暂无持仓</div></div>
             </div>
@@ -437,6 +444,36 @@ let state = { data: null };
 let chartPie = null, chartLine = null;
 let isStreaming = false;
 
+// ============ 排序状态 ============
+let sortColumn = null;
+let sortAsc = true;
+
+function sortBy(col) {
+    if (sortColumn === col) {
+        sortAsc = !sortAsc;
+    } else {
+        sortColumn = col;
+        sortAsc = true;
+    }
+    render();
+}
+
+function getSortedStocks(stocks) {
+    if (!sortColumn || !stocks) return stocks;
+    const sorted = [...stocks];
+    sorted.sort((a, b) => {
+        let va = a[sortColumn], vb = b[sortColumn];
+        if (va === undefined || va === null) va = -Infinity;
+        if (vb === undefined || vb === null) vb = -Infinity;
+        if (typeof va === 'string') {
+            const cmp = va.localeCompare(vb);
+            return sortAsc ? cmp : -cmp;
+        }
+        return sortAsc ? va - vb : vb - va;
+    });
+    return sorted;
+}
+
 // ============ 加载数据 ============
 async function loadData() {
     try {
@@ -540,16 +577,26 @@ function render() {
         }).join("");
     }).catch(()=>{}); } catch(e) {}
 
-    // 持仓表
+    // 持仓表（排序）
     const body = document.getElementById("holdingsBody");
+    const sortedStocks = getSortedStocks(d.stocks || []);
     if (!d.stocks || d.stocks.length === 0) {
         body.innerHTML = ""; document.getElementById("holdingsEmpty").style.display = "block";
     } else {
         document.getElementById("holdingsEmpty").style.display = "none";
-        body.innerHTML = d.stocks.map(s => {
+        body.innerHTML = sortedStocks.map(s => {
             const pc = s.pnl>=0?"up":"down", rc = s.return_pct>=0?"up":"down";
             return `<tr><td class="stock-name" style="cursor:pointer;color:#2F5496;font-weight:500;" onclick="showStockDetail('${s.name}')">${s.name}</td><td style="font-size:12px;color:#888;">${s.account||'-'}</td><td>${s.qty||'-'}</td><td>${s.price?s.price.toFixed(2):'-'}</td><td>${s.cost?s.cost.toFixed(2):'-'}</td><td class="num">${s.market_value?s.market_value.toLocaleString():'-'}</td><td class="num ${pc}">${s.pnl>=0?"+":""}${s.pnl?s.pnl.toLocaleString():'-'}</td><td class="num ${rc}">${s.return_pct>=0?"+":""}${s.return_pct}%</td><td class="num">${s.alloc_pct}%</td></tr>`;
         }).join("");
+        // 更新排序箭头
+        document.querySelectorAll("#tabHoldings th .sort-arrow").forEach(el => el.textContent = "");
+        if (sortColumn) {
+            const ths = document.querySelectorAll("#tabHoldings th");
+            const colIdx = ["name","account","qty","price","cost","market_value","pnl","return_pct","alloc_pct"].indexOf(sortColumn);
+            if (ths[colIdx]) {
+                ths[colIdx].querySelector(".sort-arrow").textContent = sortAsc ? " ▲" : " ▼";
+            }
+        }
     }
 
     // 图表
