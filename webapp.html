@@ -409,6 +409,20 @@ tr:hover { background: #f8f9ff; }
     </div>
 </div>
 
+<!-- 个股详情弹窗 -->
+<div class="modal-overlay" id="stockDetailModal">
+    <div class="modal" style="width:420px;max-width:88vw;">
+        <button class="close-btn" onclick="hideStockDetail()">&times;</button>
+        <h2 id="stockDetailName" style="font-size:18px;">--</h2>
+        <div id="stockDetailBody" style="font-size:13px;line-height:1.8;">
+            <div class="empty-state"><span class="spinner"></span> 加载中...</div>
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-outline" onclick="hideStockDetail()">关闭</button>
+        </div>
+    </div>
+</div>
+
 <script>
 // ============ 全局状态 ============
 let state = { data: null };
@@ -526,7 +540,7 @@ function render() {
         document.getElementById("holdingsEmpty").style.display = "none";
         body.innerHTML = d.stocks.map(s => {
             const pc = s.pnl>=0?"up":"down", rc = s.return_pct>=0?"up":"down";
-            return `<tr><td class="stock-name">${s.name}</td><td style="font-size:12px;color:#888;">${s.account||'-'}</td><td>${s.qty||'-'}</td><td>${s.price?s.price.toFixed(2):'-'}</td><td>${s.cost?s.cost.toFixed(2):'-'}</td><td class="num">${s.market_value?s.market_value.toLocaleString():'-'}</td><td class="num ${pc}">${s.pnl>=0?"+":""}${s.pnl?s.pnl.toLocaleString():'-'}</td><td class="num ${rc}">${s.return_pct>=0?"+":""}${s.return_pct}%</td><td class="num">${s.alloc_pct}%</td></tr>`;
+            return `<tr><td class="stock-name" style="cursor:pointer;color:#2F5496;font-weight:500;" onclick="showStockDetail('${s.name}')">${s.name}</td><td style="font-size:12px;color:#888;">${s.account||'-'}</td><td>${s.qty||'-'}</td><td>${s.price?s.price.toFixed(2):'-'}</td><td>${s.cost?s.cost.toFixed(2):'-'}</td><td class="num">${s.market_value?s.market_value.toLocaleString():'-'}</td><td class="num ${pc}">${s.pnl>=0?"+":""}${s.pnl?s.pnl.toLocaleString():'-'}</td><td class="num ${rc}">${s.return_pct>=0?"+":""}${s.return_pct}%</td><td class="num">${s.alloc_pct}%</td></tr>`;
         }).join("");
     }
 
@@ -890,6 +904,73 @@ async function showEditHistory() {
 
 function hideEditHistory() {
     document.getElementById("editHistoryModal").classList.remove("show");
+}
+
+// ============ 个股详情 ============
+function showStockDetail(name) {
+    const d = state.data;
+    if (!d || !d.stocks) return;
+    const s = d.stocks.find(x => x.name === name);
+    if (!s) return;
+
+    document.getElementById("stockDetailName").textContent = `${s.name}`;
+    const sectorMap = {"科达利":"新能源车","三花智控":"新能源车","拓普集团":"新能源车","天齐锂业":"新能源车","立讯精密":"消费电子","五粮液":"白酒","元隆雅图":"文化传媒"};
+    const sector = sectorMap[name] || "其他";
+    const pc = s.pnl>=0?"up":"down";
+
+    const needRise = s.pnl < 0 ? ((s.cost - s.price) / s.price * 100).toFixed(1) : '0';
+
+    document.getElementById("stockDetailBody").innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px;">
+            <div style="background:#f8f9ff;padding:10px;border-radius:8px;">
+                <div style="color:#999;font-size:11px;">现价</div>
+                <div style="font-size:20px;font-weight:700;">${s.price?s.price.toFixed(2):'-'}</div>
+            </div>
+            <div style="background:#f8f9ff;padding:10px;border-radius:8px;">
+                <div style="color:#999;font-size:11px;">成本</div>
+                <div style="font-size:20px;font-weight:700;">${s.cost?s.cost.toFixed(2):'-'}</div>
+            </div>
+            <div style="background:#f8f9ff;padding:10px;border-radius:8px;">
+                <div style="color:#999;font-size:11px;">持股</div>
+                <div style="font-size:20px;font-weight:700;">${s.qty||0}股</div>
+                <div style="font-size:11px;color:#888;">${s.qty>=100?Math.floor(s.qty/100)+'手':''}</div>
+            </div>
+            <div style="background:#f8f9ff;padding:10px;border-radius:8px;">
+                <div style="color:#999;font-size:11px;">市值</div>
+                <div style="font-size:20px;font-weight:700;">${s.market_value?s.market_value.toLocaleString():'-'}</div>
+            </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+            <div style="padding:8px;border-radius:6px;background:${s.pnl>=0?'#f0fff0':'#fff0f0'};">
+                <div style="color:#999;font-size:11px;">盈亏</div>
+                <div style="font-size:16px;font-weight:700;color:${s.pnl>=0?'#CC0000':'#009900'};">${s.pnl>=0?'+':''}${s.pnl?s.pnl.toLocaleString():'-'}</div>
+                <div style="font-size:12px;color:${s.pnl>=0?'#CC0000':'#009900'};">${s.return_pct>=0?'+':''}${s.return_pct}%</div>
+            </div>
+            <div style="padding:8px;border-radius:6px;background:#f8f9ff;">
+                <div style="color:#999;font-size:11px;">占比</div>
+                <div style="font-size:16px;font-weight:700;">${s.alloc_pct}%</div>
+                <div style="font-size:12px;color:#888;">${s.account||'-'}</div>
+            </div>
+        </div>
+        <div style="margin-top:10px;padding:8px;background:#f8f9ff;border-radius:6px;font-size:12px;color:#555;">
+            板块: <b>${sector}</b>
+            ${s.pnl<0?` · 需回本涨幅: <b style="color:#009900;">${needRise}%</b>`:''}
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-sm" style="background:#fff0f0;color:#CC0000;border:1px solid #ffcccc;" onclick="loadAiBreakeven('${s.name}','${sector}',${s.cost},${s.price},'stockDetailAiBe',this);hideStockDetailAfter=true">🤖 回本预估</button>
+            <button class="btn btn-sm btn-green" onclick="loadAiAddAdvice('${s.name}','${sector}',${s.qty},${s.cost},${s.price},0,'stockDetailAiAdd',this);hideStockDetailAfter=true">🤖 加仓分析</button>
+        </div>
+        <div id="stockDetailAiBe" style="margin-top:6px;"></div>
+        <div id="stockDetailAiAdd" style="margin-top:6px;"></div>
+    `;
+    document.getElementById("stockDetailModal").classList.add("show");
+}
+
+function hideStockDetail() {
+    document.getElementById("stockDetailModal").classList.remove("show");
+    // 清理 AI 结果，下次打开重新加载
+    document.getElementById("stockDetailAiBe").innerHTML = "";
+    document.getElementById("stockDetailAiAdd").innerHTML = "";
 }
 
 // ============ 回本分析 ============
