@@ -485,10 +485,11 @@ function render() {
         document.getElementById("kpiAcct1Pnl").textContent = (acct1.pnl >= 0 ? "+" : "") + acct1.pnl.toLocaleString();
         document.getElementById("kpiAcct1Pnl").style.color = acct1.pnl >= 0 ? "#CC0000" : "#009900";
     }
-    // 账户二（短线）
+    // 账户二（短线）仅股票市值
     const acct2 = accts["账户二（短线）"] || accts["账户二"];
     if (acct2) {
-        document.getElementById("kpiAcct2").textContent = acct2.value.toLocaleString();
+        const stockVal2 = acct2.stock_value || acct2.value;
+        document.getElementById("kpiAcct2").textContent = stockVal2.toLocaleString();
         document.getElementById("kpiAcct2Pnl").textContent = (acct2.pnl >= 0 ? "+" : "") + acct2.pnl.toLocaleString();
         document.getElementById("kpiAcct2Pnl").style.color = acct2.pnl >= 0 ? "#CC0000" : "#009900";
     }
