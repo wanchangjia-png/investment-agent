@@ -389,6 +389,14 @@ def api_breakeven():
     return {"stocks": agent.breakeven_analysis(holdings, cash)}
 
 
+def api_kline():
+    """返回持仓股票的日K线数据"""
+    try:
+        return {"data": agent.fetch_kline()}
+    except Exception as e:
+        return {"error": str(e), "data": {}}
+
+
 def api_add_position_advice(data):
     """AI 分析某只股票是否应该加仓，基于市场消息和行情"""
     stock_name = data.get("name", "")
@@ -530,6 +538,12 @@ class PortfolioHandler(BaseHTTPRequestHandler):
         elif self.path == "/api/breakeven":
             try:
                 self._send_json(api_breakeven())
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif self.path == "/api/kline":
+            try:
+                self._send_json(api_kline())
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 

@@ -213,6 +213,7 @@ tr:hover { background: #f8f9ff; }
             <div class="tab-bar">
                 <button class="tab-btn active" onclick="switchTab('holdings',this)">📋 持仓</button>
                 <button class="tab-btn" onclick="switchTab('charts',this)">📊 图表</button>
+                <button class="tab-btn" onclick="switchTab('kline',this)">📈 K线</button>
                 <button class="tab-btn" onclick="switchTab('risks',this)">⚠️ 风险</button>
                 <button class="tab-btn" onclick="switchTab('history',this)">📈 净值</button>
                 <button class="tab-btn" onclick="switchTab('breakeven',this)">🎯 回本</button>
@@ -232,6 +233,13 @@ tr:hover { background: #f8f9ff; }
                     <div class="chart-box"><canvas id="pieChart"></canvas></div>
                     <div class="chart-box"><canvas id="lineChart"></canvas></div>
                 </div>
+            </div>
+
+            <div class="tab-content" id="tabKline">
+                <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;" id="klineStockBtns"></div>
+                <div style="position:relative;height:320px;"><canvas id="klineChart"></canvas></div>
+                <div id="klineStats" style="margin-top:8px;font-size:12px;color:#888;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;"></div>
+                <div id="klineEmpty" class="empty-state" style="display:none;"><div class="icon">📈</div><div>暂无K线数据</div></div>
             </div>
 
             <div class="tab-content" id="tabRisks"><div class="risk-list" id="risksContainer"></div>
@@ -502,6 +510,140 @@ function switchTab(name, btn) {
     if (tab) tab.classList.add("active");
     // 按需加载数据
     if (name === "breakeven") loadBreakeven();
+    if (name === "kline") loadKlineData();
+}
+
+// ============ K线 ============
+let klineChart = null;
+let klineDataCache = {};
+let klineSelectedStock = null;
+
+async function loadKlineData() {
+    const container = document.getElementById("klineEmpty");
+    const btns = document.getElementById("klineStockBtns");
+    btns.innerHTML = '<span class="spinner"></span> 加载中...';
+    try {
+        const res = await fetch("/api/kline");
+        const result = await res.json();
+        if (result.error) { btns.innerHTML = '<span style="color:red;">加载失败</span>'; return; }
+        klineDataCache = result.data || {};
+        const names = Object.keys(klineDataCache);
+        if (names.length === 0) { btns.innerHTML = ''; container.style.display = 'block'; return; }
+        container.style.display = 'none';
+        // 生成股票选择按钮
+        btns.innerHTML = names.map(n => `<button class="btn btn-sm ${klineSelectedStock === n ? 'btn-primary' : 'btn-outline'}" onclick="selectKlineStock('${n}')">${n}</button>`).join('');
+        // 默认选第一支
+        if (!klineSelectedStock || !klineDataCache[klineSelectedStock]) {
+            klineSelectedStock = names[0];
+            btns.innerHTML = names.map(n => `<button class="btn btn-sm ${klineSelectedStock === n ? 'btn-primary' : 'btn-outline'}" onclick="selectKlineStock('${n}')">${n}</button>`).join('');
+        }
+        renderKlineChart(klineSelectedStock);
+    } catch(e) {
+        btns.innerHTML = '<span style="color:red;">K线加载失败</span>';
+    }
+}
+
+function selectKlineStock(name) {
+    klineSelectedStock = name;
+    // 更新按钮样式
+    const btns = document.getElementById("klineStockBtns");
+    btns.querySelectorAll("button").forEach(b => {
+        b.className = b.textContent === name ? "btn btn-sm btn-primary" : "btn btn-sm btn-outline";
+    });
+    renderKlineChart(name);
+}
+
+function renderKlineChart(name) {
+    const data = klineDataCache[name];
+    if (!data || data.length === 0) return;
+
+    const ctx = document.getElementById("klineChart");
+    if (!ctx) return;
+    if (klineChart) klineChart.destroy();
+
+    const labels = data.map(d => d.date);
+    const closes = data.map(d => d.close);
+    const opens = data.map(d => d.open);
+    const highs = data.map(d => d.high);
+    const lows = data.map(d => d.low);
+
+    // 颜色：涨=红(A股), 跌=绿
+    const colors = data.map(d => d.close >= d.open ? '#CC0000' : '#009900');
+    const bgColors = data.map(d => d.close >= d.open ? 'rgba(204,0,0,0.1)' : 'rgba(0,153,0,0.1)');
+
+    // 计算统计
+    const maxPrice = Math.max(...highs);
+    const minPrice = Math.min(...lows);
+    const firstClose = closes[0];
+    const lastClose = closes[closes.length - 1];
+    const change = lastClose - firstClose;
+    const changePct = change / firstClose * 100;
+    const avgVolume = Math.round(data.reduce((s,d) => s + d.volume, 0) / data.length);
+
+    klineChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                label: '收盘价',
+                data: closes,
+                borderColor: '#2F5496',
+                backgroundColor: ctx => {
+                    const c = ctx.chart.data.datasets[0].data;
+                    const gradient = ctx.chart.ctx.createLinearGradient(0, 0, 0, 250);
+                    gradient.addColorStop(0, 'rgba(47,84,150,0.25)');
+                    gradient.addColorStop(1, 'rgba(47,84,150,0.02)');
+                    return gradient;
+                },
+                fill: true,
+                tension: 0.2,
+                pointRadius: 0,
+                pointHitRadius: 8,
+                borderWidth: 2,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        title: items => items[0].label,
+                        label: item => {
+                            const i = item.dataIndex;
+                            return [
+                                `开: ${data[i].open.toFixed(2)}  收: ${data[i].close.toFixed(2)}`,
+                                `高: ${data[i].high.toFixed(2)}  低: ${data[i].low.toFixed(2)}`,
+                                `量: ${(data[i].volume/10000).toFixed(1)}万手`,
+                            ];
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { maxTicksLimit: 8, font: { size: 10 } },
+                    grid: { display: false }
+                },
+                y: {
+                    position: 'right',
+                    ticks: { font: { size: 10 } },
+                    grid: { color: '#f0f0f0' }
+                }
+            },
+            interaction: { mode: 'index', intersect: false }
+        }
+    });
+
+    // 统计
+    const statsEl = document.getElementById("klineStats");
+    statsEl.innerHTML = `
+        <div style="text-align:center;"><div class="lbl" style="color:#999;font-size:11px;">区间涨幅</div><div style="font-weight:600;font-size:15px;color:${change>=0?'#CC0000':'#009900'}">${change>=0?'+':''}${changePct.toFixed(1)}%</div></div>
+        <div style="text-align:center;"><div class="lbl" style="color:#999;font-size:11px;">最高/最低</div><div style="font-weight:600;font-size:13px;">${maxPrice.toFixed(2)} / ${minPrice.toFixed(2)}</div></div>
+        <div style="text-align:center;"><div class="lbl" style="color:#999;font-size:11px;">日均成交量</div><div style="font-weight:600;font-size:13px;">${(avgVolume/10000).toFixed(0)}万手</div></div>
+        <div style="text-align:center;"><div class="lbl" style="color:#999;font-size:11px;">数据天数</div><div style="font-weight:600;font-size:13px;">${data.length}天</div></div>
+    `;
 }
 
 // ============ 对话框 ============

@@ -321,6 +321,42 @@ def fetch_prices():
     return prices, failed
 
 
+def fetch_kline():
+    """从新浪财经获取所有持仓股票的历史日K线数据"""
+    import urllib.request
+    holdings = load_portfolio()
+    kline_data = {}
+    for h in holdings:
+        if h["类别"] != "股票" or not h.get("代码"):
+            continue
+        code = h["代码"]
+        prefix = "sz" if code.startswith(("00", "30")) else "sh"
+        url = f"http://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol={prefix}{code}&scale=240&datalen=45"
+        try:
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
+            })
+            resp = urllib.request.urlopen(req, timeout=10)
+            raw = resp.read().decode("gbk", errors="ignore")
+            if raw:
+                import json
+                records = json.loads(raw)
+                closes = []
+                for r in records[-30:]:
+                    closes.append({
+                        "date": r["day"][:10],
+                        "open": float(r["open"]),
+                        "high": float(r["high"]),
+                        "low": float(r["low"]),
+                        "close": float(r["close"]),
+                        "volume": int(r.get("volume", 0)),
+                    })
+                kline_data[h["名称"]] = closes
+        except Exception as e:
+            print(f"⚠️ {h['名称']} K线获取失败: {e}")
+    return kline_data
+
+
 # ============ 计算 ============
 def calculate(holdings):
     """计算各项指标"""
