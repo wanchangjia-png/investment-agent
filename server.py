@@ -418,6 +418,11 @@ def api_refresh():
     total_value, total_pnl, accounts = agent.calculate(holdings)
     detail = {k: v["市值"] for k, v in accounts.items()}
     snapshot_recorded = agent.save_networth_snapshot(total_value, total_pnl, detail)
+    if snapshot_recorded:
+        try:
+            agent.sync_portfolio_to_github()
+        except Exception:
+            pass
     # 更新 HTML 看板
     try:
         from report_generator import generate as gen_html
