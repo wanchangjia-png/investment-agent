@@ -295,12 +295,25 @@ def save_networth_snapshot(total, pnl, detail):
             wb.close()
             return False
 
-    # 计算当日盈亏（与前一日总资产比较）
+    # 计算当日盈亏（与前一日总资产比较，扣除当日出入金）
     prev_total = 0
     for row in ws.iter_rows(min_row=2, max_col=5, values_only=True):
         if row[0] and row[0] != today and row[4]:
             prev_total = row[4]
-    daily_pnl = round(total - prev_total, 2) if prev_total > 0 else 0
+    # 加载当日出入金净额
+    today_net_flow = 0
+    try:
+        fwb = openpyxl.load_workbook(EXCEL_PATH)
+        if "出入金" in fwb.sheetnames:
+            fws = fwb["出入金"]
+            for row in fws.iter_rows(min_row=2, values_only=True):
+                if row[0] and str(row[0]).startswith(today) and row[1] and row[2]:
+                    amt = float(row[2])
+                    today_net_flow += amt if str(row[1]) == "存入" else -amt
+        fwb.close()
+    except Exception:
+        pass
+    daily_pnl = round(total - prev_total - today_net_flow, 2) if prev_total > 0 else 0
 
     ws.cell(row=last_row, column=1, value=today)
     ws.cell(row=last_row, column=2, value=detail.get("A股主账户", 0))
