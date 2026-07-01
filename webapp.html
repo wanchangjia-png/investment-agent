@@ -193,7 +193,7 @@ tr:hover { background: #f8f9ff; }
         <span class="status-bar" id="statusBar">就绪</span>
         <button class="btn btn-sm btn-outline" onclick="showSettings()">⚙️</button>
         <button class="btn btn-sm btn-outline" onclick="showEditHoldings()">📝 编辑持仓</button>
-        <button class="btn btn-sm btn-outline" onclick="showCapitalFlow()">💰 出入金</button>
+        <button class="btn btn-sm btn-outline" onclick="showCapitalFlowPwd()">💰 出入金</button>
         <button class="btn btn-primary" id="refreshBtn" onclick="refreshData()">🔄 刷新</button>
     </div>
 </div>
@@ -473,6 +473,7 @@ tr:hover { background: #f8f9ff; }
 let state = { data: null };
 let chartPie = null, chartLine = null;
 let isStreaming = false;
+let pwdPendingAction = null;
 
 // ============ 排序状态 ============
 let sortColumn = null;
@@ -993,6 +994,14 @@ function hideEditHistory() {
 }
 
 // ============ 出入金 ============
+function showCapitalFlowPwd() {
+    pwdPendingAction = showCapitalFlow;
+    document.getElementById("pwdModal").classList.add("show");
+    document.getElementById("pwdInput").value = "";
+    document.getElementById("pwdError").style.display = "none";
+    setTimeout(() => document.getElementById("pwdInput").focus(), 100);
+}
+
 function showCapitalFlow() {
     document.getElementById("capitalFlowModal").classList.add("show");
     document.getElementById("cfAmount").value = "";
@@ -1394,6 +1403,7 @@ let editHoldingsUnlocked = false;
 
 function showEditHoldings() {
     if (!editHoldingsUnlocked) {
+        pwdPendingAction = null;
         document.getElementById("pwdModal").classList.add("show");
         document.getElementById("pwdInput").value = "";
         document.getElementById("pwdError").style.display = "none";
@@ -1408,7 +1418,14 @@ function submitPwd() {
     if (String(pwd).trim() === "9804") {
         document.getElementById("pwdModal").classList.remove("show");
         editHoldingsUnlocked = true;
-        openEditModal();
+        // 执行密码挂起的操作
+        if (typeof pwdPendingAction === 'function') {
+            const fn = pwdPendingAction;
+            pwdPendingAction = null;
+            fn();
+        } else {
+            openEditModal();
+        }
     } else {
         document.getElementById("pwdError").style.display = "block";
         document.getElementById("pwdInput").focus();
@@ -1417,6 +1434,7 @@ function submitPwd() {
 
 function cancelPwd() {
     document.getElementById("pwdModal").classList.remove("show");
+    pwdPendingAction = null;
 }
 
 function openEditModal() {
