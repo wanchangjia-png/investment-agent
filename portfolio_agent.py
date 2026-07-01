@@ -349,12 +349,13 @@ def _code_to_tdx(code):
     return f"{prefix}{code}"
 
 def fetch_prices():
-    """通过腾讯财经 API 获取实时股票价格"""
+    """通过腾讯财经 API 获取实时股票价格，返回 (prices, prev_closes, failed)"""
     import urllib.request
     import urllib.parse
     import json
 
     prices = {}
+    prev_closes = {}
     failed = []
 
     # 股票价格
@@ -373,14 +374,17 @@ def fetch_prices():
                 if not line or "=" not in line:
                     continue
                 parts = line.split("~")
-                if len(parts) >= 4:
+                if len(parts) >= 5:
                     code_full = parts[0].split("=")[0].strip("v_")
                     code = code_full[2:]  # 去掉 sz/sh 前缀
                     if code in stock_names:
                         try:
                             price = float(parts[3]) if parts[3] else 0
+                            prev_close = float(parts[4]) if parts[4] else 0
                             if price > 0:
                                 prices[stock_names[code]] = price
+                                if prev_close > 0:
+                                    prev_closes[stock_names[code]] = prev_close
                             else:
                                 failed.append(stock_names[code])
                         except ValueError:
@@ -407,7 +411,7 @@ def fetch_prices():
         print(f"⚠️ 黄金价格获取失败: {e}")
         failed.append("黄金")
 
-    return prices, failed
+    return prices, prev_closes, failed
 
 
 def fetch_kline():
@@ -479,12 +483,15 @@ def calculate(holdings):
     return total_market_value, total_pnl, accounts
 
 
-def update_holdings_with_prices(holdings, prices):
+def update_holdings_with_prices(holdings, prices, prev_closes=None):
     """用拉取到的价格更新持仓数据"""
+    if prev_closes is None:
+        prev_closes = {}
     for h in holdings:
         name = h["名称"]
         if name in prices:
             h["现价"] = prices[name]
+            h["昨收"] = prev_closes.get(name, 0)
 
             # 计算股票市值和盈亏
             if h["类别"] == "股票" and h["数量"] > 0 and h["成本价"] > 0:
@@ -1003,9 +1010,9 @@ def print_daily(holdings):
 
     # 1. 行情快照
     print("\n🔄 正在获取实时行情...")
-    prices, failed = fetch_prices()
+    prices, prev_closes, failed = fetch_prices()
     if prices:
-        holdings = update_holdings_with_prices(holdings, prices)
+        holdings = update_holdings_with_prices(holdings, prices, prev_closes)
         save_prices(holdings)
         print(f"✅ 已更新 {len(prices)} 个价格")
     if failed:
@@ -1064,10 +1071,10 @@ def main():
     elif cmd == "refresh":
         print("🔄 正在获取实时行情...")
         holdings = load_portfolio()
-        prices, failed = fetch_prices()
+        prices, prev_closes, failed = fetch_prices()
         if prices:
             print(f"✅ 获取到 {len(prices)} 个价格")
-            holdings = update_holdings_with_prices(holdings, prices)
+            holdings = update_holdings_with_prices(holdings, prices, prev_closes)
             save_prices(holdings)
             print_holdings(holdings)
         if failed:

@@ -322,16 +322,21 @@ def api_data():
     stocks = []
     for h in holdings:
         if h["类别"] == "股票":
+            qty = h["数量"] or 0
+            price = h["现价"] or 0
+            prev_close = h.get("昨收", 0)
+            today_pnl = round((price - prev_close) * qty, 2) if prev_close > 0 and qty > 0 else 0
             stocks.append({
                 "name": h["名称"],
                 "account": h["账户"],
-                "price": h["现价"],
+                "price": price,
                 "cost": h["成本价"],
-                "qty": h["数量"],
+                "qty": qty,
                 "market_value": h["市值"],
                 "pnl": h["盈亏"],
                 "return_pct": round(h["收益率"] * 100, 2) if h["收益率"] else 0,
                 "alloc_pct": round(h["仓位占比"] * 100, 1) if h["仓位占比"] else 0,
+                "today_pnl": today_pnl,
             })
 
     by_type = {}
@@ -369,9 +374,9 @@ def api_data():
 def api_refresh():
     """刷新行情并返回更新后的数据"""
     holdings = agent.load_portfolio()
-    prices, failed = agent.fetch_prices()
+    prices, prev_closes, failed = agent.fetch_prices()
     if prices:
-        holdings = agent.update_holdings_with_prices(holdings, prices)
+        holdings = agent.update_holdings_with_prices(holdings, prices, prev_closes)
         agent.save_prices(holdings)
     # 记录净值（只在15:00收盘后记录）
     total_value, total_pnl, accounts = agent.calculate(holdings)
@@ -724,9 +729,9 @@ class PortfolioHandler(BaseHTTPRequestHandler):
             try:
                 holdings_data = data.get("holdings", [])
                 result = agent.save_holdings(holdings_data)
-                prices, failed = agent.fetch_prices()
+                prices, prev_closes, failed = agent.fetch_prices()
                 if prices:
-                    result = agent.update_holdings_with_prices(result, prices)
+                    result = agent.update_holdings_with_prices(result, prices, prev_closes)
                     agent.save_prices(result)
                 # 同步到 GitHub，防止 Railway 部署时数据丢失
                 agent.sync_portfolio_to_github()
