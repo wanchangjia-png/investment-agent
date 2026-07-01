@@ -313,18 +313,54 @@ def chat_stream(messages, search_enabled=True):
 
 # ============ API 处理 ============
 
+def _fetch_prev_closes():
+    """从腾讯 API 获取所有股票的昨收价"""
+    import urllib.request
+    codes = agent.STOCK_CODES
+    if not codes:
+        return {}
+    stock_names = {v: k for k, v in codes.items()}
+    tdx_codes = [agent._code_to_tdx(c) for c in codes.values()]
+    url = "http://qt.gtimg.cn/q=" + ",".join(tdx_codes)
+    prev_closes = {}
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        resp = urllib.request.urlopen(req, timeout=8)
+        text = resp.read().decode("gbk")
+        for line in text.strip().split(";"):
+            line = line.strip()
+            if not line or "=" not in line:
+                continue
+            parts = line.split("~")
+            if len(parts) >= 5:
+                code_full = parts[0].split("=")[0].strip("v_")
+                code = code_full[2:]
+                name = stock_names.get(code)
+                if name:
+                    try:
+                        pc = float(parts[4]) if parts[4] else 0
+                        if pc > 0:
+                            prev_closes[name] = pc
+                    except ValueError:
+                        pass
+    except Exception:
+        pass
+    return prev_closes
+
+
 def api_data():
     """返回持仓数据 JSON"""
     holdings = agent.load_portfolio()
     total_value, total_pnl, accounts = agent.calculate(holdings)
     history = agent.load_history()
+    prev_closes = _fetch_prev_closes()
 
     stocks = []
     for h in holdings:
         if h["类别"] == "股票":
             qty = h["数量"] or 0
             price = h["现价"] or 0
-            prev_close = h.get("昨收", 0)
+            prev_close = prev_closes.get(h["名称"], 0)
             today_pnl = round((price - prev_close) * qty, 2) if prev_close > 0 and qty > 0 else 0
             stocks.append({
                 "name": h["名称"],
