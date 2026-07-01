@@ -397,6 +397,14 @@ def api_data():
     net_capital, flow_count = agent.get_net_capital()
     true_pnl = round(total_value - net_capital, 2) if net_capital > 0 else total_pnl
 
+    # 当日出入金净额（用于调整今日盈亏）
+    today = datetime.now().strftime("%Y-%m-%d")
+    all_flows = agent.load_capital_flows()
+    today_net_flow = sum(
+        f["amount"] if f["type"] == "存入" else -f["amount"]
+        for f in all_flows if f["date"].startswith(today)
+    )
+
     return {
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "total_value": total_value,
@@ -404,6 +412,7 @@ def api_data():
         "total_return_pct": round(total_pnl / (total_value - total_pnl) * 100, 2) if (total_value - total_pnl) > 0 else 0,
         "net_capital": net_capital,
         "true_pnl": true_pnl,
+        "today_net_flow": today_net_flow,
         "stocks": stocks,
         "accounts": {k: {"value": v["市值"], "pnl": v["盈亏"], "stock_value": v.get("股票市值", 0)} for k, v in accounts.items()},
         "allocation": {k: v for k, v in sorted(by_type.items(), key=lambda x: -x[1])},

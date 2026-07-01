@@ -203,7 +203,7 @@ tr:hover { background: #f8f9ff; }
     <div class="left-panel" id="leftPanel">
         <div class="kpi-row" id="kpiRow" style="grid-template-columns:repeat(5,1fr);">
             <div class="kpi-card"><div class="label">总资产</div><div class="value" id="kpiTotal">--</div><div class="sub">元</div></div>
-            <div class="kpi-card"><div class="label">累计盈亏</div><div class="value" id="kpiPnl">--</div><div class="sub" id="kpiReturn">--</div><div style="font-size:11px;color:#999;margin-top:1px;" id="kpiNetCapital"></div></div>
+            <div class="kpi-card"><div class="label">累计盈亏</div><div class="value" id="kpiPnl">--</div><div class="sub" id="kpiReturn">--</div></div>
             <div class="kpi-card"><div class="label">今日盈亏</div><div class="value" id="kpiToday">--</div><div class="sub" id="kpiTodaySub">--</div></div>
             <div class="kpi-card" onclick="switchTab('risks')"><div class="label">风险项</div><div class="value" id="kpiRisk">--</div><div class="sub" id="kpiRiskLabel">待处理</div></div>
             <div class="kpi-card"><div class="label">股票</div><div class="value" id="kpiCount">--</div><div class="sub">只</div></div>
@@ -542,11 +542,6 @@ function render() {
     retEl.style.color = d.total_return_pct >= 0 ? "#CC0000" : "#009900";
     document.getElementById("kpiCount").textContent = d.stocks.length;
 
-    // 净投入 & 真实盈亏
-    if (d.net_capital) {
-        document.getElementById("kpiNetCapital").textContent = "净投入 " + d.net_capital.toLocaleString() + "元 · 真实盈亏 " + (d.true_pnl >= 0 ? "+" : "") + d.true_pnl.toLocaleString() + "元";
-    }
-
     // 今日盈亏（较前日净值记录）
     const hist = d.history || [];
     const todayStr = new Date().toLocaleDateString('en-CA');
@@ -559,7 +554,8 @@ function render() {
         }
     }
     if (prevTotal !== null) {
-        const todayPnl = d.total_value - prevTotal;
+        const todayNetFlow = d.today_net_flow || 0;
+        const todayPnl = d.total_value - prevTotal - todayNetFlow;
         const todayEl = document.getElementById("kpiToday");
         todayEl.textContent = (todayPnl >= 0 ? "+" : "") + todayPnl.toLocaleString();
         todayEl.className = "value " + (todayPnl >= 0 ? "up" : "down");
