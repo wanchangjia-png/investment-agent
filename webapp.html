@@ -135,7 +135,7 @@ tr:hover { background: #f8f9ff; }
 .modal .close-btn { float: right; background: none; border: none; font-size: 22px; cursor: pointer; color: #888; }
 .empty-state { text-align: center; padding: 30px; color: #aaa; font-size: 13px; }
 .empty-state .icon { font-size: 36px; margin-bottom: 8px; }
-.history-table { max-height: 300px; overflow-y: auto; }
+.history-table { min-height: 200px; }
 
 /* 移动端 */
 @media (max-width: 900px) {
@@ -658,7 +658,62 @@ function renderHistory(history) {
     const empty = document.getElementById("historyEmpty");
     if (!history || history.length === 0) { container.innerHTML=""; empty.style.display="block"; return; }
     empty.style.display="none";
-    container.innerHTML = `<table><thead><tr><th>日期</th><th>星期</th><th class="num">总资产</th><th class="num">每日盈亏</th><th class="num">累计盈亏</th></tr></thead><tbody>${history.map(r=>`<tr><td>${r.date}</td><td style="font-size:11px;color:#888;">${r.weekday||''}</td><td class="num">${r.total.toLocaleString()}</td><td class="num ${r.daily>0?'up':r.daily<0?'down':''}">${r.daily>0?'+':''}${r.daily?r.daily.toLocaleString():'--'}</td><td class="num ${r.pnl>=0?'up':'down'}">${r.pnl>=0?'+':''}${r.pnl.toLocaleString()}</td></tr>`).join("")}</tbody></table>`;
+
+    // 按年月分组 { "2026-06": { 29: record, 30: record, ... } }
+    const byMonth = {};
+    history.forEach(r => {
+        const ym = r.date.substring(0, 7);
+        if (!byMonth[ym]) byMonth[ym] = {};
+        byMonth[ym][parseInt(r.date.substring(8))] = r;
+    });
+
+    const dayNames = ["周一","周二","周三","周四","周五","周六","周日"];
+    const weekCol = d => d >= 5 ? 'opacity:0.55;' : '';  // 周末淡化
+
+    let html = "";
+    for (const [ym, days] of Object.entries(byMonth).sort()) {
+        const [y, m] = ym.split("-");
+        const monthLabel = `${y}年${parseInt(m)}月`;
+        const firstDay = new Date(+y, +m-1, 1).getDay();  // 0=Sun
+        const startOffset = firstDay === 0 ? 6 : firstDay - 1;
+        const daysInMonth = new Date(+y, +m, 0).getDate();
+
+        html += `<div style="margin-bottom:18px;">
+            <div style="font-weight:600;font-size:15px;color:#2F5496;margin-bottom:8px;">${monthLabel}</div>
+            <table style="font-size:11px;width:100%;table-layout:fixed;border-collapse:separate;border-spacing:3px;">
+            <thead><tr>${dayNames.map(d => `<th style="text-align:center;padding:2px;font-size:11px;color:#888;font-weight:500;">${d}</th>`).join("")}</tr></thead>
+            <tbody>`;
+
+        let day = 1;
+        for (let row = 0; row < 6; row++) {
+            if (day > daysInMonth) break;
+            html += "<tr>";
+            for (let col = 0; col < 7; col++) {
+                if ((row === 0 && col < startOffset) || day > daysInMonth) {
+                    html += `<td style="padding:2px;"></td>`;
+                } else {
+                    const r = days[day];
+                    const isWeekend = col >= 5;
+                    if (r) {
+                        const isUp = r.daily > 0, isDown = r.daily < 0;
+                        const bgColor = isUp ? '#fff0f0' : isDown ? '#f0fff0' : '#f8f8f8';
+                        const dailyColor = isUp ? '#CC0000' : isDown ? '#009900' : '#888';
+                        html += `<td style="padding:4px 2px;text-align:center;background:${bgColor};border-radius:6px;${weekCol(isWeekend)}vertical-align:top;">
+                            <div style="font-weight:600;font-size:13px;color:#333;">${day}</div>
+                            <div style="font-size:10px;color:#555;line-height:1.4;">${r.total.toLocaleString()}</div>
+                            <div style="font-size:10px;font-weight:500;color:${dailyColor};">${isUp?'+':''}${r.daily?r.daily.toLocaleString():'--'}</div>
+                        </td>`;
+                    } else {
+                        html += `<td style="padding:4px 2px;text-align:center;color:#ddd;font-size:11px;${weekCol(isWeekend)}">${day}</td>`;
+                    }
+                    day++;
+                }
+            }
+            html += "</tr>";
+        }
+        html += "</tbody></table></div>";
+    }
+    container.innerHTML = html;
 }
 
 // ============ 建议 ============
