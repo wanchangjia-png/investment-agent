@@ -193,6 +193,7 @@ tr:hover { background: #f8f9ff; }
         <span class="status-bar" id="statusBar">就绪</span>
         <button class="btn btn-sm btn-outline" onclick="showSettings()">⚙️</button>
         <button class="btn btn-sm btn-outline" onclick="showEditHoldings()">📝 编辑持仓</button>
+        <button class="btn btn-sm btn-outline" onclick="showCapitalFlow()">💰 出入金</button>
         <button class="btn btn-primary" id="refreshBtn" onclick="refreshData()">🔄 刷新</button>
     </div>
 </div>
@@ -202,7 +203,7 @@ tr:hover { background: #f8f9ff; }
     <div class="left-panel" id="leftPanel">
         <div class="kpi-row" id="kpiRow" style="grid-template-columns:repeat(5,1fr);">
             <div class="kpi-card"><div class="label">总资产</div><div class="value" id="kpiTotal">--</div><div class="sub">元</div></div>
-            <div class="kpi-card"><div class="label">累计盈亏</div><div class="value" id="kpiPnl">--</div><div class="sub" id="kpiReturn">--</div></div>
+            <div class="kpi-card"><div class="label">累计盈亏</div><div class="value" id="kpiPnl">--</div><div class="sub" id="kpiReturn">--</div><div style="font-size:11px;color:#999;margin-top:1px;" id="kpiNetCapital"></div></div>
             <div class="kpi-card"><div class="label">今日盈亏</div><div class="value" id="kpiToday">--</div><div class="sub" id="kpiTodaySub">--</div></div>
             <div class="kpi-card" onclick="switchTab('risks')"><div class="label">风险项</div><div class="value" id="kpiRisk">--</div><div class="sub" id="kpiRiskLabel">待处理</div></div>
             <div class="kpi-card"><div class="label">股票</div><div class="value" id="kpiCount">--</div><div class="sub">只</div></div>
@@ -417,6 +418,34 @@ tr:hover { background: #f8f9ff; }
     </div>
 </div>
 
+<!-- ===== 出入金弹窗 ===== -->
+<div class="modal-overlay" id="capitalFlowModal">
+    <div class="modal" style="width:380px;max-width:90vw;">
+        <button class="close-btn" onclick="hideCapitalFlow()">&times;</button>
+        <h2>💰 出入金记录</h2>
+        <div class="field">
+            <label>类型</label>
+            <select id="cfType" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;">
+                <option value="存入">存入（外部资金转入）</option>
+                <option value="取出">取出（转出到外部）</option>
+            </select>
+        </div>
+        <div class="field">
+            <label>金额（元）</label>
+            <input type="number" id="cfAmount" placeholder="输入金额" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;">
+        </div>
+        <div class="field">
+            <label>备注（可选）</label>
+            <input type="text" id="cfNote" placeholder="如：外部资金购入黄金" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;">
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-outline" onclick="hideCapitalFlow()">取消</button>
+            <button class="btn btn-primary" onclick="saveCapitalFlow()">保存</button>
+        </div>
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid #eee;max-height:200px;overflow-y:auto;" id="cfHistory"></div>
+    </div>
+</div>
+
 <!-- 个股详情弹窗 -->
 <div class="modal-overlay" id="stockDetailModal">
     <div class="modal" style="width:560px;max-width:92vw;">
@@ -512,6 +541,11 @@ function render() {
     retEl.textContent = (d.total_return_pct >= 0 ? "+" : "") + d.total_return_pct + "%";
     retEl.style.color = d.total_return_pct >= 0 ? "#CC0000" : "#009900";
     document.getElementById("kpiCount").textContent = d.stocks.length;
+
+    // 净投入 & 真实盈亏
+    if (d.net_capital) {
+        document.getElementById("kpiNetCapital").textContent = "净投入 " + d.net_capital.toLocaleString() + "元 · 真实盈亏 " + (d.true_pnl >= 0 ? "+" : "") + d.true_pnl.toLocaleString() + "元";
+    }
 
     // 今日盈亏（较前日净值记录）
     const hist = d.history || [];
@@ -960,6 +994,57 @@ async function showEditHistory() {
 
 function hideEditHistory() {
     document.getElementById("editHistoryModal").classList.remove("show");
+}
+
+// ============ 出入金 ============
+function showCapitalFlow() {
+    document.getElementById("capitalFlowModal").classList.add("show");
+    document.getElementById("cfAmount").value = "";
+    document.getElementById("cfNote").value = "";
+    loadCapitalFlowHistory();
+}
+
+function hideCapitalFlow() {
+    document.getElementById("capitalFlowModal").classList.remove("show");
+}
+
+async function saveCapitalFlow() {
+    const amount = parseFloat(document.getElementById("cfAmount").value);
+    const type = document.getElementById("cfType").value;
+    const note = document.getElementById("cfNote").value.trim();
+    if (!amount || amount <= 0) { alert("请输入有效金额"); return; }
+    try {
+        const res = await fetch("/api/capital-flow", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ amount, type, note })
+        });
+        const data = await res.json();
+        if (data.success) {
+            hideCapitalFlow();
+            refreshData();
+        } else {
+            alert("保存失败: " + (data.error || ""));
+        }
+    } catch(e) {
+        alert("保存失败: " + e.message);
+    }
+}
+
+async function loadCapitalFlowHistory() {
+    const container = document.getElementById("cfHistory");
+    try {
+        const res = await fetch("/api/capital-flows");
+        const data = await res.json();
+        const flows = data.flows || [];
+        if (flows.length === 0) {
+            container.innerHTML = '<div style="text-align:center;color:#ccc;font-size:12px;padding:10px;">暂无记录</div>';
+            return;
+        }
+        container.innerHTML = `<table style="font-size:12px;width:100%;"><thead><tr><th>日期</th><th>类型</th><th class="num">金额</th><th>备注</th></tr></thead><tbody>${flows.map(f => `<tr><td style="font-size:11px;color:#888;">${f.date}</td><td>${f.type}</td><td class="num" style="color:${f.type==='存入'?'#CC0000':'#009900'}">${f.type==='存入'?'+':'-'}${f.amount.toLocaleString()}</td><td style="font-size:11px;color:#888;">${escapeHtml(f.note)}</td></tr>`).join("")}</tbody></table>`;
+    } catch(e) {
+        container.innerHTML = '<div style="text-align:center;color:#CC0000;font-size:12px;">加载失败</div>';
+    }
 }
 
 // ============ 个股详情 ============

@@ -330,6 +330,94 @@ def load_history():
     return records
 
 
+# ============ 出入金记录 ============
+def add_capital_flow(amount, flow_type, note=""):
+    """记录一笔出入金
+    flow_type: "存入" or "取出"
+    返回 True/False
+    """
+    try:
+        wb = openpyxl.load_workbook(EXCEL_PATH)
+        if "出入金" not in wb.sheetnames:
+            ws = wb.create_sheet("出入金")
+            ws.append(["日期", "类型", "金额", "备注"])
+            ws.column_dimensions["A"].width = 14
+            ws.column_dimensions["B"].width = 8
+            ws.column_dimensions["C"].width = 14
+            ws.column_dimensions["D"].width = 30
+        else:
+            ws = wb["出入金"]
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        ws.append([now, flow_type, amount, note])
+        wb.save(EXCEL_PATH)
+        wb.close()
+        return True
+    except Exception as e:
+        print(f"⚠️ 记录出入金失败: {e}")
+        return False
+
+
+def load_capital_flows():
+    """读取所有出入金记录，按时间倒序"""
+    try:
+        wb = openpyxl.load_workbook(EXCEL_PATH)
+        if "出入金" not in wb.sheetnames:
+            wb.close()
+            return []
+        ws = wb["出入金"]
+        flows = []
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[0] is None:
+                continue
+            flows.append({
+                "date": str(row[0]),
+                "type": str(row[1]) if row[1] else "",
+                "amount": float(row[2]) if row[2] else 0,
+                "note": str(row[3]) if row[3] else "",
+            })
+        wb.close()
+        # 按时间倒序
+        flows.reverse()
+        return flows
+    except Exception:
+        return []
+
+
+def get_net_capital():
+    """计算净投入资金 = 总存入 - 总取出"""
+    flows = load_capital_flows()
+    total_in = sum(f["amount"] for f in flows if f["type"] == "存入")
+    total_out = sum(f["amount"] for f in flows if f["type"] == "取出")
+    net = total_in - total_out
+    # 如果没有出入金记录，用当前持仓的成本作为初始本金
+    if not flows and net == 0:
+        holdings = load_portfolio()
+        cost = sum(
+            (h["数量"] or 0) * (h["成本价"] or 0)
+            for h in holdings if h["类别"] in ("股票", "黄金") and h["成本价"]
+        ) + sum(h["市值"] for h in holdings if h["类别"] == "现金")
+        if cost > 0:
+            # 自动记录初始本金
+            try:
+                wb = openpyxl.load_workbook(EXCEL_PATH)
+                if "出入金" not in wb.sheetnames:
+                    ws = wb.create_sheet("出入金")
+                    ws.append(["日期", "类型", "金额", "备注"])
+                    ws.column_dimensions["A"].width = 14
+                    ws.column_dimensions["B"].width = 8
+                    ws.column_dimensions["C"].width = 14
+                    ws.column_dimensions["D"].width = 30
+                else:
+                    ws = wb["出入金"]
+                ws.append([datetime.now().strftime("%Y-%m-%d %H:%M"), "存入", round(cost, 2), "初始本金（自动记录）"])
+                wb.save(EXCEL_PATH)
+                wb.close()
+                return round(cost, 2), 1
+            except Exception:
+                pass
+    return net, len(flows)
+
+
 # ============ 市场数据 ============
 # 使用腾讯财经公开 API（无需额外安装依赖）
 # 接口: http://qt.gtimg.cn/q=sz000858,sz002850,...

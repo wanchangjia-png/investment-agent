@@ -394,11 +394,16 @@ def api_data():
             "note": h.get("备注", ""),
         })
 
+    net_capital, flow_count = agent.get_net_capital()
+    true_pnl = round(total_value - net_capital, 2) if net_capital > 0 else total_pnl
+
     return {
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "total_value": total_value,
         "total_pnl": total_pnl,
         "total_return_pct": round(total_pnl / (total_value - total_pnl) * 100, 2) if (total_value - total_pnl) > 0 else 0,
+        "net_capital": net_capital,
+        "true_pnl": true_pnl,
         "stocks": stocks,
         "accounts": {k: {"value": v["市值"], "pnl": v["盈亏"], "stock_value": v.get("股票市值", 0)} for k, v in accounts.items()},
         "allocation": {k: v for k, v in sorted(by_type.items(), key=lambda x: -x[1])},
@@ -699,6 +704,14 @@ class PortfolioHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
+        elif self.path == "/api/capital-flows":
+            try:
+                flows = agent.load_capital_flows()
+                net, cnt = agent.get_net_capital()
+                self._send_json({"flows": flows, "net_capital": net})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
         elif self.path == "/api/config":
             self._send_json({
                 "provider": LLM_CONFIG["provider"],
@@ -751,6 +764,28 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                 LLM_CONFIG["model"] = value
                 save_config_sheet("model", value)
             self._send_json({"success": True})
+
+        elif self.path == "/api/capital-flow":
+            try:
+                amount = float(data.get("amount", 0))
+                flow_type = data.get("type", "存入")
+                note = data.get("note", "")
+                if amount <= 0:
+                    self._send_json({"success": False, "error": "金额必须大于0"})
+                    return
+                ok = agent.add_capital_flow(amount, flow_type, note)
+                agent.sync_portfolio_to_github()
+                self._send_json({"success": ok})
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)}, 500)
+
+        elif self.path == "/api/capital-flows":
+            try:
+                flows = agent.load_capital_flows()
+                net, cnt = agent.get_net_capital()
+                self._send_json({"flows": flows, "net_capital": net})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
 
         elif self.path == "/api/add-position-advice":
             try:
