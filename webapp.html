@@ -700,7 +700,9 @@ function renderHistory(history) {
                         const dailyColor = isUp ? '#CC0000' : isDown ? '#009900' : '#888';
                         html += `<td style="padding:4px 2px;text-align:center;background:${bgColor};border-radius:6px;${weekCol(isWeekend)}vertical-align:top;">
                             <div style="font-weight:600;font-size:13px;color:#333;">${day}</div>
-                            <div style="font-size:10px;color:#555;line-height:1.4;">${r.total.toLocaleString()}</div>
+                            <div style="font-size:9px;color:#999;line-height:1.3;">总资产</div>
+                            <div style="font-size:10px;color:#555;line-height:1.3;">${r.total.toLocaleString()}</div>
+                            <div style="font-size:9px;color:#999;line-height:1.3;">日盈亏</div>
                             <div style="font-size:10px;font-weight:500;color:${dailyColor};">${isUp?'+':''}${r.daily?r.daily.toLocaleString():'--'}</div>
                         </td>`;
                     } else {
