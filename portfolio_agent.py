@@ -337,6 +337,17 @@ def load_history():
     return records
 
 
+def _weekday_cn(date_str):
+    """将 '2026-06-29' 格式日期转为中文星期"""
+    try:
+        from datetime import datetime
+        dt = datetime.strptime(date_str[:10], "%Y-%m-%d")
+        weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+        return weekdays[dt.weekday()]
+    except Exception:
+        return ""
+
+
 # ============ 出入金记录 ============
 def add_capital_flow(amount, flow_type, note=""):
     """记录一笔出入金

@@ -658,7 +658,7 @@ function renderHistory(history) {
     const empty = document.getElementById("historyEmpty");
     if (!history || history.length === 0) { container.innerHTML=""; empty.style.display="block"; return; }
     empty.style.display="none";
-    container.innerHTML = `<table><thead><tr><th>日期</th><th class="num">总资产</th><th class="num">每日盈亏</th><th class="num">累计盈亏</th></tr></thead><tbody>${history.map(r=>`<tr><td>${r.date}</td><td class="num">${r.total.toLocaleString()}</td><td class="num ${r.daily>0?'up':r.daily<0?'down':''}">${r.daily>0?'+':''}${r.daily?r.daily.toLocaleString():'--'}</td><td class="num ${r.pnl>=0?'up':'down'}">${r.pnl>=0?'+':''}${r.pnl.toLocaleString()}</td></tr>`).join("")}</tbody></table>`;
+    container.innerHTML = `<table><thead><tr><th>日期</th><th>星期</th><th class="num">总资产</th><th class="num">每日盈亏</th><th class="num">累计盈亏</th></tr></thead><tbody>${history.map(r=>`<tr><td>${r.date}</td><td style="font-size:11px;color:#888;">${r.weekday||''}</td><td class="num">${r.total.toLocaleString()}</td><td class="num ${r.daily>0?'up':r.daily<0?'down':''}">${r.daily>0?'+':''}${r.daily?r.daily.toLocaleString():'--'}</td><td class="num ${r.pnl>=0?'up':'down'}">${r.pnl>=0?'+':''}${r.pnl.toLocaleString()}</td></tr>`).join("")}</tbody></table>`;
 }
 
 // ============ 建议 ============
