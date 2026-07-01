@@ -295,12 +295,19 @@ def save_networth_snapshot(total, pnl, detail):
             wb.close()
             return False
 
+    # 计算当日盈亏（与前一日总资产比较）
+    prev_total = 0
+    for row in ws.iter_rows(min_row=2, max_col=5, values_only=True):
+        if row[0] and row[0] != today and row[4]:
+            prev_total = row[4]
+    daily_pnl = round(total - prev_total, 2) if prev_total > 0 else 0
+
     ws.cell(row=last_row, column=1, value=today)
     ws.cell(row=last_row, column=2, value=detail.get("A股主账户", 0))
     ws.cell(row=last_row, column=3, value=detail.get("黄金", 0))
     ws.cell(row=last_row, column=4, value=detail.get("账户二（短线）", 0))
     ws.cell(row=last_row, column=5, value=total)
-    ws.cell(row=last_row, column=6, value=0)
+    ws.cell(row=last_row, column=6, value=daily_pnl)
     ws.cell(row=last_row, column=7, value=pnl)
     ws.cell(row=last_row, column=8, value="收盘记录")
     wb.save(EXCEL_PATH)

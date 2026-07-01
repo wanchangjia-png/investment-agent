@@ -416,7 +416,7 @@ def api_data():
         "stocks": stocks,
         "accounts": {k: {"value": v["市值"], "pnl": v["盈亏"], "stock_value": v.get("股票市值", 0)} for k, v in accounts.items()},
         "allocation": {k: v for k, v in sorted(by_type.items(), key=lambda x: -x[1])},
-        "history": [{"date": r["日期"], "total": r["总资产"], "pnl": r["累计盈亏"]} for r in history],
+        "history": [{"date": r["日期"], "total": r["总资产"], "pnl": r["累计盈亏"], "daily": r["当日盈亏"]} for r in history],
         "holdings_raw": raw_holdings,
     }
 
