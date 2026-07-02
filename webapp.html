@@ -194,6 +194,7 @@ tr:hover { background: #f8f9ff; }
         <button class="btn btn-sm btn-outline" onclick="showSettings()">⚙️</button>
         <button class="btn btn-sm btn-outline" onclick="showEditHoldings()">📝 编辑持仓</button>
         <button class="btn btn-sm btn-outline" onclick="showCapitalFlowPwd()">💰 出入金</button>
+        <button class="btn btn-sm btn-outline" onclick="showRealizedPnlPwd()">📋 清仓记录</button>
         <button class="btn btn-primary" id="refreshBtn" onclick="refreshData()">🔄 刷新</button>
     </div>
 </div>
@@ -208,11 +209,12 @@ tr:hover { background: #f8f9ff; }
             <div class="kpi-card" onclick="switchTab('risks')"><div class="label">风险项</div><div class="value" id="kpiRisk">--</div><div class="sub" id="kpiRiskLabel">待处理</div></div>
             <div class="kpi-card"><div class="label">股票</div><div class="value" id="kpiCount">--</div><div class="sub">只</div></div>
         </div>
-        <div class="kpi-row" id="kpiRow2" style="grid-template-columns:repeat(4,1fr);margin-top:0;">
+        <div class="kpi-row" id="kpiRow2" style="grid-template-columns:repeat(5,1fr);margin-top:0;">
             <div class="kpi-card"><div class="label">A股主账户</div><div class="value" id="kpiAcct1" style="font-size:18px;">--</div><div class="sub" id="kpiAcct1Pnl">--</div></div>
             <div class="kpi-card"><div class="label">黄金</div><div class="value" id="kpiGold" style="color:#FFC000;font-size:18px;">--</div><div class="sub" id="kpiGoldPnl">--</div></div>
             <div class="kpi-card"><div class="label">账户二（短线）</div><div class="value" id="kpiAcct2" style="font-size:18px;">--</div><div class="sub" id="kpiAcct2Pnl">--</div></div>
             <div class="kpi-card"><div class="label">现金</div><div class="value" id="kpiCash" style="color:#70AD47;font-size:18px;">--</div><div class="sub">可用资金</div></div>
+            <div class="kpi-card"><div class="label">清仓浮亏</div><div class="value" id="kpiRealized">--</div><div class="sub">已实现盈亏</div></div>
         </div>
 
         <div style="flex:1;display:flex;flex-direction:column;min-height:0;">
@@ -438,6 +440,45 @@ tr:hover { background: #f8f9ff; }
     </div>
 </div>
 
+<!-- ===== 清仓记录弹窗 ===== -->
+<div class="modal-overlay" id="realizedPnlModal">
+    <div class="modal" style="width:620px;max-width:92vw;">
+        <button class="close-btn" onclick="hideRealizedPnl()">&times;</button>
+        <h2>📋 清仓记录</h2>
+        <div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #eee;">
+            <p style="font-size:12px;color:#888;margin-bottom:10px;">记录已清仓的股票，系统会自动计算实现盈亏。</p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <div class="field">
+                    <label>股票名称</label>
+                    <input type="text" id="rpName" placeholder="如：五粮液" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;">
+                </div>
+                <div class="field">
+                    <label>卖出股数</label>
+                    <input type="number" id="rpQty" placeholder="如：200" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;">
+                </div>
+                <div class="field">
+                    <label>卖出价（元）</label>
+                    <input type="number" step="0.01" id="rpPrice" placeholder="如：155.00" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;">
+                </div>
+                <div class="field">
+                    <label>成本价（元）</label>
+                    <input type="number" step="0.01" id="rpCost" placeholder="如：160.00" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;">
+                </div>
+            </div>
+            <div class="modal-actions" style="margin-top:10px;">
+                <button class="btn btn-primary" onclick="saveRealizedPnl()">💾 保存</button>
+            </div>
+        </div>
+        <div style="font-size:13px;color:#888;margin-bottom:8px;">累计清仓盈亏：<span id="rpTotal" style="font-weight:700;">--</span></div>
+        <div style="max-height:280px;overflow-y:auto;" id="rpHistory">
+            <div class="empty-state"><span class="spinner"></span> 加载中...</div>
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-outline" onclick="hideRealizedPnl()">关闭</button>
+        </div>
+    </div>
+</div>
+
 <!-- 个股详情弹窗 -->
 <div class="modal-overlay" id="stockDetailModal">
     <div class="modal" style="width:560px;max-width:92vw;">
@@ -602,6 +643,12 @@ function render() {
     // 现金
     const cashVal = (d.allocation && d.allocation["现金"]) || 0;
     document.getElementById("kpiCash").textContent = cashVal.toLocaleString();
+    // 清仓浮亏
+    const realizedEl = document.getElementById("kpiRealized");
+    if (realizedEl && d.realized_pnl !== undefined) {
+        realizedEl.textContent = (d.realized_pnl >= 0 ? "+" : "") + d.realized_pnl.toLocaleString();
+        realizedEl.style.color = d.realized_pnl >= 0 ? "#CC0000" : "#009900";
+    }
 
     // 风险 KPI
     try { fetch("/api/advice").then(r=>r.json()).then(r=>{
@@ -1142,6 +1189,81 @@ async function loadCapitalFlowHistory() {
             return;
         }
         container.innerHTML = `<table style="font-size:12px;width:100%;"><thead><tr><th>日期</th><th>类型</th><th class="num">金额</th><th>备注</th></tr></thead><tbody>${flows.map(f => `<tr><td style="font-size:11px;color:#888;">${f.date}</td><td>${f.type}</td><td class="num" style="color:${f.type==='存入'?'#CC0000':'#009900'}">${f.type==='存入'?'+':'-'}${f.amount.toLocaleString()}</td><td style="font-size:11px;color:#888;">${escapeHtml(f.note)}</td></tr>`).join("")}</tbody></table>`;
+    } catch(e) {
+        container.innerHTML = '<div style="text-align:center;color:#CC0000;font-size:12px;">加载失败</div>';
+    }
+}
+
+// ============ 清仓记录 ============
+function showRealizedPnlPwd() {
+    pwdPendingAction = showRealizedPnl;
+    document.getElementById("pwdModal").classList.add("show");
+    document.getElementById("pwdInput").value = "";
+    document.getElementById("pwdError").style.display = "none";
+    setTimeout(() => document.getElementById("pwdInput").focus(), 100);
+}
+
+function showRealizedPnl() {
+    document.getElementById("realizedPnlModal").classList.add("show");
+    document.getElementById("rpName").value = "";
+    document.getElementById("rpQty").value = "";
+    document.getElementById("rpPrice").value = "";
+    document.getElementById("rpCost").value = "";
+    loadRealizedPnlHistory();
+}
+
+function hideRealizedPnl() {
+    document.getElementById("realizedPnlModal").classList.remove("show");
+}
+
+async function saveRealizedPnl() {
+    const name = document.getElementById("rpName").value.trim();
+    const qty = parseInt(document.getElementById("rpQty").value);
+    const price = parseFloat(document.getElementById("rpPrice").value);
+    const cost = parseFloat(document.getElementById("rpCost").value);
+    if (!name || !qty || !price || !cost) { alert("请完整填写"); return; }
+    try {
+        const res = await fetch("/api/realized-pnl", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({name, qty, price, cost})
+        });
+        const data = await res.json();
+        if (data.success) {
+            loadRealizedPnlHistory();
+            document.getElementById("rpName").value = "";
+            document.getElementById("rpQty").value = "";
+            document.getElementById("rpPrice").value = "";
+            document.getElementById("rpCost").value = "";
+            refreshData();
+        } else {
+            alert("保存失败: " + (data.error || ""));
+        }
+    } catch(e) {
+        alert("保存失败: " + e.message);
+    }
+}
+
+async function loadRealizedPnlHistory() {
+    const container = document.getElementById("rpHistory");
+    try {
+        const res = await fetch("/api/realized-pnl");
+        const data = await res.json();
+        const records = data.records || [];
+        const total = data.total || 0;
+        const totalEl = document.getElementById("rpTotal");
+        if (totalEl) {
+            totalEl.textContent = (total >= 0 ? "+" : "") + total.toLocaleString();
+            totalEl.style.color = total >= 0 ? "#CC0000" : "#009900";
+        }
+        if (records.length === 0) {
+            container.innerHTML = '<div style="text-align:center;color:#ccc;font-size:12px;padding:20px;">暂无清仓记录</div>';
+            return;
+        }
+        container.innerHTML = `<table style="font-size:12px;width:100%;"><thead><tr><th>日期</th><th>名称</th><th>操作</th><th class="num">股数</th><th class="num">卖出价</th><th class="num">成本价</th><th class="num">实现盈亏</th></tr></thead><tbody>${records.map(r => {
+            const pnl = r.pnl || 0;
+            return `<tr><td style="font-size:11px;color:#888;white-space:nowrap;">${r.date}</td><td>${escapeHtml(r.name)}</td><td>${r.action||'清仓'}</td><td class="num">${r.qty}</td><td class="num">${r.price?r.price.toFixed(2):'-'}</td><td class="num">${r.cost?r.cost.toFixed(2):'-'}</td><td class="num" style="color:${pnl>=0?'#CC0000':'#009900'}">${pnl>=0?'+':''}${pnl.toLocaleString()}</td></tr>`;
+        }).join("")}</tbody></table>`;
     } catch(e) {
         container.innerHTML = '<div style="text-align:center;color:#CC0000;font-size:12px;">加载失败</div>';
     }

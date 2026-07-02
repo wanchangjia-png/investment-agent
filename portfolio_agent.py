@@ -172,28 +172,6 @@ def save_holdings(holdings_data):
     ws.cell(row=tr, column=8, value=sum(h["市值"] for h in new_holdings))
     ws.cell(row=tr, column=9, value=sum(h["盈亏"] for h in new_holdings))
 
-    # 检测股票减少/清仓，记录已实现盈亏
-    def _key(h): return (h["类别"], h["账户"], h["名称"])
-    old_map = {_key(h): h for h in old_holdings if h["名称"] and h["类别"] == "股票"}
-    new_map = {_key(h): h for h in new_holdings if h["名称"] and h["类别"] == "股票"}
-    for k in set(old_map) - set(new_map):
-        oh = old_map[k]
-        qty = int(oh["数量"]) if oh["数量"] else 0
-        price = oh["现价"] or 0
-        cost = oh["成本价"] or 0
-        if qty > 0 and price > 0 and cost > 0:
-            record_realized_pnl(oh["名称"], qty, price, cost, "清仓")
-    for k in set(old_map) & set(new_map):
-        oh = old_map[k]; nh = new_map[k]
-        old_qty = int(oh["数量"]) if oh["数量"] else 0
-        new_qty = int(nh["数量"]) if nh["数量"] else 0
-        if old_qty > new_qty:
-            diff = old_qty - new_qty
-            price = oh["现价"] or 0
-            cost = oh["成本价"] or 0
-            if diff > 0 and price > 0 and cost > 0:
-                record_realized_pnl(oh["名称"], diff, price, cost, "卖出")
-
     # 记录编辑日志
     _log_edit(old_holdings, new_holdings, wb)
 

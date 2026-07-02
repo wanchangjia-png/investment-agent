@@ -746,6 +746,14 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                 "key_prefix": LLM_CONFIG["api_key"][:8] + "..." if LLM_CONFIG["api_key"] else "",
             })
 
+        elif self.path == "/api/realized-pnl":
+            try:
+                records = agent.get_realized_pnl_records()
+                total = agent.get_realized_pnl_total()
+                self._send_json({"records": records, "total": total})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
         else:
             self._send_json({"error": "not found"}, 404)
 
@@ -846,6 +854,21 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                 self._send_json(result)
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
+
+        elif self.path == "/api/realized-pnl":
+            try:
+                name = data.get("name", "").strip()
+                qty = int(data.get("qty", 0))
+                price = float(data.get("price", 0))
+                cost = float(data.get("cost", 0))
+                if not name or qty <= 0 or price <= 0 or cost <= 0:
+                    self._send_json({"success": False, "error": "请完整填写"})
+                    return
+                agent.record_realized_pnl(name, qty, price, cost, "清仓")
+                agent.sync_portfolio_to_github()
+                self._send_json({"success": True})
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)}, 500)
 
         else:
             self._send_json({"error": "not found"}, 404)
