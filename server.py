@@ -371,6 +371,8 @@ def api_data():
     for h in holdings:
         if h["类别"] == "股票":
             qty = h["数量"] or 0
+            if qty == 0:
+                continue  # 已清仓的不显示在持仓中
             price = h["现价"] or 0
             prev_close = prev_closes.get(h["名称"], 0)
             today_pnl = round((price - prev_close) * qty, 2) if prev_close > 0 and qty > 0 else 0
@@ -420,6 +422,9 @@ def api_data():
     realized_pnl = agent.get_realized_pnl_total()
     unrealized_pnl = total_pnl - realized_pnl
 
+    # 已清仓股票（持股数=0）
+    cleared_stocks = agent.get_cleared_positions()
+
     return {
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "total_value": total_value,
@@ -431,6 +436,7 @@ def api_data():
         "true_pnl": true_pnl,
         "today_net_flow": today_net_flow,
         "stocks": stocks,
+        "cleared_stocks": cleared_stocks,
         "accounts": {k: {"value": v["市值"], "pnl": v["盈亏"], "stock_value": v.get("股票市值", 0)} for k, v in accounts.items()},
         "allocation": {k: v for k, v in sorted(by_type.items(), key=lambda x: -x[1])},
         "history": [{"date": r["日期"], "weekday": agent._weekday_cn(r["日期"]), "total": r["总资产"], "pnl": r["累计盈亏"], "daily": r["当日盈亏"]} for r in history],

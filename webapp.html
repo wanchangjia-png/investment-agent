@@ -220,6 +220,7 @@ tr:hover { background: #f8f9ff; }
         <div style="flex:1;display:flex;flex-direction:column;min-height:0;">
             <div class="tab-bar">
                 <button class="tab-btn active" onclick="switchTab('holdings',this)">📋 持仓</button>
+                <button class="tab-btn" onclick="switchTab('cleared',this)">📁 已清仓</button>
                 <button class="tab-btn" onclick="switchTab('charts',this)">📊 图表</button>
                 <button class="tab-btn" onclick="switchTab('kline',this)">📈 K线</button>
                 <button class="tab-btn" onclick="switchTab('risks',this)">⚠️ 风险</button>
@@ -242,6 +243,19 @@ tr:hover { background: #f8f9ff; }
                     <th class="num" onclick="sortBy('alloc_pct')" style="cursor:pointer;">占比 <span class="sort-arrow"></span></th>
                 </tr></thead><tbody id="holdingsBody"></tbody></table></div>
                 <div id="holdingsEmpty" class="empty-state" style="display:none;"><div class="icon">📭</div><div>暂无持仓</div></div>
+            </div>
+
+            <div class="tab-content" id="tabCleared">
+                <div style="margin-bottom:8px;display:flex;gap:10px;flex-wrap:wrap;" id="clearedSummary"></div>
+                <div class="table-wrap"><table><thead><tr>
+                    <th>名称</th>
+                    <th>账户</th>
+                    <th class="num">成本价</th>
+                    <th class="num">清仓价</th>
+                    <th class="num">实现盈亏</th>
+                    <th>清仓日期</th>
+                </tr></thead><tbody id="clearedBody"></tbody></table></div>
+                <div id="clearedEmpty" class="empty-state" style="display:none;"><div class="icon">📁</div><div>暂无清仓股票</div></div>
             </div>
 
             <div class="tab-content" id="tabCharts">
@@ -779,6 +793,46 @@ async function loadAdvice() {
     } catch(e) { c.innerHTML = '<div class="empty-state">⚠️ 生成失败</div>'; }
 }
 
+// ============ 已清仓 ============
+function renderCleared() {
+    const d = state.data;
+    if (!d) return;
+    const cleared = d.cleared_stocks || [];
+    const body = document.getElementById("clearedBody");
+    const empty = document.getElementById("clearedEmpty");
+    const summary = document.getElementById("clearedSummary");
+
+    if (cleared.length === 0) {
+        body.innerHTML = "";
+        empty.style.display = "block";
+        summary.innerHTML = "";
+        return;
+    }
+    empty.style.display = "none";
+
+    // 统计
+    const totalPnl = cleared.reduce((a, c) => a + (c.realized_pnl || 0), 0);
+    const profitCount = cleared.filter(c => (c.realized_pnl || 0) >= 0).length;
+    const lossCount = cleared.length - profitCount;
+    summary.innerHTML = `
+        <div class="kpi-card" style="padding:8px 12px;"><div class="label" style="font-size:11px;">已清仓</div><div class="value" style="font-size:16px;">${cleared.length}只</div></div>
+        <div class="kpi-card" style="padding:8px 12px;"><div class="label" style="font-size:11px;">清仓盈亏</div><div class="value" style="font-size:16px;color:${totalPnl>=0?'#CC0000':'#009900'}">${totalPnl>=0?'+':''}${totalPnl.toLocaleString()}</div></div>
+        <div class="kpi-card" style="padding:8px 12px;"><div class="label" style="font-size:11px;">盈利/亏损</div><div class="value" style="font-size:16px;"><span style="color:#CC0000;">${profitCount}</span>/<span style="color:#009900;">${lossCount}</span></div></div>
+    `;
+
+    body.innerHTML = cleared.map(c => {
+        const pnl = c.realized_pnl || 0;
+        return `<tr>
+            <td style="font-weight:500;">${escapeHtml(c.name)}</td>
+            <td style="font-size:12px;color:#888;">${c.account||'-'}</td>
+            <td class="num">${c.cost>0?c.cost.toFixed(2):'-'}</td>
+            <td class="num">${c.last_price>0?c.last_price.toFixed(2):'-'}</td>
+            <td class="num" style="font-weight:600;color:${pnl>=0?'#CC0000':'#009900'}">${pnl>=0?'+':''}${pnl.toLocaleString()}</td>
+            <td style="font-size:11px;color:#888;">${c.clear_date||'-'}</td>
+        </tr>`;
+    }).join("");
+}
+
 // ============ Tab 切换 ============
 function switchTab(name, btn) {
     document.querySelectorAll(".tab-btn").forEach(t=>t.classList.remove("active"));
@@ -790,6 +844,7 @@ function switchTab(name, btn) {
     // 按需加载数据
     if (name === "breakeven") loadBreakeven();
     if (name === "kline") loadKlineData();
+    if (name === "cleared") renderCleared();
 }
 
 // ============ K线 ============
