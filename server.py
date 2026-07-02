@@ -109,6 +109,10 @@ def _build_system_prompt():
     total_value, total_pnl, accounts = agent.calculate(holdings)
     risks = agent.risk_analysis(holdings)
 
+    # 计算股票占大盘子的比例
+    def total_alloc(mv):
+        return mv / total_value * 100 if total_value > 0 else 0
+
     prompt = f"""你是万万的专属投资理财助手，名叫「万万的投资 Agent」。
 
 ## 你的角色
@@ -122,13 +126,14 @@ def _build_system_prompt():
 累计盈亏: {total_pnl:+,.0f} 元
 总收益率: {total_pnl/(total_value-total_pnl)*100:.2f}%"""
 
-    # 股票持仓
+    # 股票持仓（仓位占比 = 占总资产比例）
     stock_text = "\n\n### 股票持仓：\n"
     for h in holdings:
         if h["类别"] == "股票" and h["账户"] != "账户二（短线）":
             ret = h["收益率"] * 100 if h["收益率"] else 0
-            alloc = h["仓位占比"] * 100 if h["仓位占比"] else 0
-            stock_text += f"- {h['名称']}：{h['数量']}股 @ {h['现价']:.2f}元，市值 {h['市值']:,.0f}元，盈亏 {h['盈亏']:+,.0f}元 ({ret:+.1f}%)，仓位占比 {alloc:.1f}%\n"
+            mv = h["市值"] or 0
+            alloc = total_alloc(mv)
+            stock_text += f"- {h['名称']}：{h['数量']}股 @ {h['现价']:.2f}元，市值 {mv:,.0f}元，盈亏 {h['盈亏']:+,.0f}元 ({ret:+.1f}%)，占总资产 {alloc:.1f}%\n"
     prompt += stock_text
 
     # 账户概况
@@ -155,7 +160,8 @@ def _build_system_prompt():
         prompt += "\n### 板块分布：\n"
         for sector, stocks in sorted(sector_groups.items(), key=lambda x: -sum(s["市值"] for s in x[1])):
             names = ", ".join(f"{s['名称']}({s['市值']:,.0f}元)" for s in stocks)
-            prompt += f"- {sector}：{names}\n"
+            total_sector = sum(s["市值"] for s in stocks)
+            prompt += f"- {sector}：{names}（占总资产 {total_alloc(total_sector):.1f}%）\n"
 
     # 当前风险提示
     if risks:
@@ -164,6 +170,12 @@ def _build_system_prompt():
             prompt += f"- [{r['级别']}] {r['问题']}\n"
 
     prompt += """
+
+## 重要规则（必须遵守）
+1. **A 股最小交易单位是 1手 = 100股**，所有买卖建议的股数必须为 100 的整数倍
+2. **仓位百分比以总资产为分母**（不是以股票市值作分母），单票占总资产不超过 25%
+3. **给出具体数字**：建议操作时，明确说"卖 X 手（XX 股）"而不是"减仓一部分"
+4. **现金为王**：至少保留总资产 10% 的现金
 
 ## 回答风格
 - 短期建议：具体操作层面（减仓、加仓、止损线）

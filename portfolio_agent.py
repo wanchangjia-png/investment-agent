@@ -775,52 +775,52 @@ def risk_analysis(holdings):
     risks = []
     total_value, total_pnl, accounts = calculate(holdings)
 
-    # 1. 单票集中度
-    main_stock_value = sum(
-        h["市值"] for h in holdings
-        if h["类别"] == "股票" and h["账户"] != "账户二（短线）"
-    )
+    # 1. 单票集中度（以总资产为分母）
     for h in holdings:
-        if h["类别"] == "股票" and h["仓位占比"] and h["仓位占比"] > 0.25:
+        if h["类别"] != "股票":
+            continue
+        mv = h["市值"] or 0
+        pct_of_total = mv / total_value * 100 if total_value > 0 else 0
+        if pct_of_total > 25:
             price = h["现价"] or 0
             qty = h["数量"] or 0
-            target_mv = main_stock_value * 0.20
-            excess_mv = h["市值"] - target_mv
+            target_mv = total_value * 0.18
+            excess_mv = mv - target_mv
             if price > 0 and qty > 0 and excess_mv > 0:
-                sell_shares = int(excess_mv / price / 100) * 100     # 向下取整到整手
+                sell_shares = int(excess_mv / price / 100) * 100
                 if sell_shares <= 0:
-                    sell_shares = 100                                 # 至少卖 1 手
+                    sell_shares = 100
                 if sell_shares >= qty:
                     sell_shares = qty
                 sell_amount = sell_shares * price
                 remain = qty - sell_shares
                 remain_amount = remain * price
-                new_pct = remain_amount / main_stock_value * 100
+                new_pct = remain_amount / total_value * 100
                 suggestion = (
                     f"建议减仓 {sell_shares} 股（{sell_shares//100}手），"
                     f"当前 {qty} 股 → 保留 {remain} 股，"
-                    f"释放约 {sell_amount:,.0f} 元，仓位从 {h['仓位占比']*100:.1f}% 降至约 {new_pct:.1f}%"
+                    f"释放约 {sell_amount:,.0f} 元，仓位从 {pct_of_total:.1f}% 降至约 {new_pct:.1f}%（占总资产）"
                 )
             else:
-                suggestion = "建议分批减仓至 15-25%"
+                suggestion = "建议分批减仓至占总资产的 15-18%"
             risks.append({
                 "级别": "🔴 高风险",
-                "问题": f"{h['名称']} 仓位占比 {h['仓位占比']*100:.1f}%，超过建议上限 25%",
+                "问题": f"{h['名称']} 占总资产 {pct_of_total:.1f}%，超过建议上限 25%",
                 "建议": suggestion,
             })
 
-    # 2. 行业集中度（新能源车产业链）
+    # 2. 行业集中度（新能源车产业链，以总资产为分母）
     new_energy_stocks = ["科达利", "三花智控", "拓普集团"]
     ne_value = sum(
         h["市值"] for h in holdings
         if h["名称"] in new_energy_stocks and h["类别"] == "股票"
     )
-    total_stock_value = sum(h["市值"] for h in holdings if h["类别"] == "股票" and h["账户"] != "账户二（短线）")
-    if total_stock_value > 0 and ne_value / total_stock_value > 0.5:
+    ne_pct = ne_value / total_value * 100 if total_value > 0 else 0
+    if ne_pct > 35:
         risks.append({
             "级别": "🔴 高风险",
-            "问题": f"新能源车产业链（科达利+三花+拓普）占比 {ne_value/total_stock_value*100:.1f}%，超过 50%",
-            "建议": f"建议新增消费/医药/科技等行业股票，将同行业占比降到 40% 以下",
+            "问题": f"新能源车产业链（科达利+三花+拓普）占总资产 {ne_pct:.1f}%，超过 35%",
+            "建议": f"建议新增消费/医药/科技等行业股票，将同行业占比降到 25% 以下（占总资产）",
         })
 
     # 3. 深度亏损检查（浮亏 > 30%）
@@ -855,11 +855,12 @@ def risk_analysis(holdings):
 
     # 4. 现金比例
     cash_value = sum(h["市值"] for h in holdings if h["类别"] == "现金")
-    if total_value > 0 and cash_value / total_value < 0.08:
+    cash_pct = cash_value / total_value * 100 if total_value > 0 else 0
+    if cash_pct < 8:
         risks.append({
             "级别": "🟡 中风险",
-            "问题": f"现金仅 {cash_value:,.0f} 元（占比 {cash_value/total_value*100:.1f}%），低于建议的 10%",
-            "建议": "建议至少保留 2-3 万元现金作为应急储备",
+            "问题": f"现金仅 {cash_value:,.0f} 元（占总资产 {cash_pct:.1f}%），低于建议的 10%",
+            "建议": "建议至少保留总资产 10% 的现金作为应急储备",
         })
 
     # 5. 无固收类资产
