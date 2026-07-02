@@ -528,7 +528,7 @@ def get_cleared_positions():
             name = r["name"]
             pnl_map[name] = pnl_map.get(name, 0) + r["pnl"]
             if name not in date_map or r["date"] > date_map[name]:
-                date_map[name] = r["date"]
+                date_map[name] = r["date"].split()[0] if " " in r["date"] else r["date"]
 
         for c in cleared:
             c["realized_pnl"] = round(pnl_map.get(c["name"], 0), 2)
