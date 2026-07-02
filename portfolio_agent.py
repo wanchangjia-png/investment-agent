@@ -426,10 +426,11 @@ def get_realized_pnl_records():
             return []
         ws = wb["已实现盈亏"]
         records = []
-        for row in ws.iter_rows(min_row=2, values_only=True):
+        for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True)):
             if row[0] is None:
                 continue
             records.append({
+                "row": i + 2,  # Excel行号(1-based)
                 "date": str(row[0]),
                 "name": str(row[1]) if row[1] else "",
                 "action": str(row[2]) if row[2] else "",
@@ -443,6 +444,61 @@ def get_realized_pnl_records():
         return records
     except Exception:
         return []
+
+
+def update_realized_pnl(row_num, name=None, amount=None):
+    """编辑已实现盈亏记录
+    row_num: Excel行号(1-based)
+    """
+    try:
+        wb = openpyxl.load_workbook(EXCEL_PATH)
+        if "已实现盈亏" not in wb.sheetnames:
+            wb.close()
+            return False
+        ws = wb["已实现盈亏"]
+        cell = ws.cell(row=row_num, column=1)
+        if cell.value is None:
+            wb.close()
+            return False
+        if name is not None:
+            ws.cell(row=row_num, column=2, value=name)
+        if amount is not None:
+            ws.cell(row=row_num, column=7, value=round(float(amount), 2))
+        wb.save(EXCEL_PATH)
+        wb.close()
+        print(f"📝 已更新已实现盈亏: 行{row_num}")
+        return True
+    except Exception as e:
+        print(f"⚠️ 更新已实现盈亏失败: {e}")
+        return False
+
+
+def delete_realized_pnl(row_num):
+    """删除已实现盈亏记录
+    row_num: Excel行号(1-based)
+    """
+    try:
+        wb = openpyxl.load_workbook(EXCEL_PATH)
+        if "已实现盈亏" not in wb.sheetnames:
+            wb.close()
+            return False
+        ws = wb["已实现盈亏"]
+        cell = ws.cell(row=row_num, column=1)
+        if cell.value is None:
+            wb.close()
+            return False
+        # 清空该行
+        for col in range(1, 8):
+            ws.cell(row=row_num, column=col, value=None)
+        # 可选：压缩行（删除空行）
+        ws.delete_rows(row_num)
+        wb.save(EXCEL_PATH)
+        wb.close()
+        print(f"🗑️ 已删除已实现盈亏: 行{row_num}")
+        return True
+    except Exception as e:
+        print(f"⚠️ 删除已实现盈亏失败: {e}")
+        return False
 
 
 # ============ 出入金记录 ============

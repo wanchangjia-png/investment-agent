@@ -448,11 +448,12 @@ tr:hover { background: #f8f9ff; }
         <div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #eee;">
             <p style="font-size:12px;color:#888;margin-bottom:10px;">选择已清仓的股票，手动输入实现盈亏金额（负数为亏损）。</p>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-                <div class="field">
+                <div class="field" id="rpNameField">
                     <label>股票名称</label>
                     <select id="rpName" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;">
                         <option value="">请选择...</option>
                     </select>
+                    <input type="text" id="rpNameInput" style="display:none;width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;" placeholder="输入股票名称">
                 </div>
                 <div class="field">
                     <label>盈亏金额（元）</label>
@@ -460,7 +461,9 @@ tr:hover { background: #f8f9ff; }
                 </div>
             </div>
             <div class="modal-actions" style="margin-top:10px;">
-                <button class="btn btn-primary" onclick="saveRealizedPnl()">💾 保存</button>
+                <span id="rpEditHint" style="font-size:12px;color:#888;display:none;">✏️ 编辑模式</span>
+                <button class="btn btn-primary" id="rpSaveBtn" onclick="saveRealizedPnl()">💾 保存</button>
+                <button class="btn btn-outline" id="rpCancelEdit" style="display:none;" onclick="cancelEditRealizedPnl()">取消编辑</button>
             </div>
         </div>
         <div style="font-size:13px;color:#888;margin-bottom:8px;">累计清仓盈亏：<span id="rpTotal" style="font-weight:700;">--</span></div>
@@ -501,6 +504,7 @@ let state = { data: null };
 let chartPie = null, chartLine = null;
 let isStreaming = false;
 let pwdPendingAction = null;
+let rpEditingRow = null;
 
 // ============ 排序状态 ============
 let sortColumn = null;
@@ -1199,6 +1203,14 @@ function showRealizedPnlPwd() {
 
 function showRealizedPnl() {
     document.getElementById("realizedPnlModal").classList.add("show");
+    // 重置编辑状态
+    rpEditingRow = null;
+    document.getElementById("rpEditHint").style.display = "none";
+    document.getElementById("rpCancelEdit").style.display = "none";
+    document.getElementById("rpSaveBtn").textContent = "💾 保存";
+    document.getElementById("rpName").style.display = "";
+    document.getElementById("rpNameInput").style.display = "none";
+    document.getElementById("rpNameInput").value = "";
     // 填充股票下拉
     const sel = document.getElementById("rpName");
     sel.innerHTML = '<option value="">请选择...</option>';
@@ -1216,6 +1228,38 @@ function hideRealizedPnl() {
 }
 
 async function saveRealizedPnl() {
+    if (rpEditingRow) {
+        // 编辑模式
+        const name = document.getElementById("rpNameInput").value.trim() || document.getElementById("rpName").value;
+        const amount = parseFloat(document.getElementById("rpAmount").value);
+        if (!name) { alert("请输入股票名称"); return; }
+        if (isNaN(amount)) { alert("请输入盈亏金额"); return; }
+        try {
+            const res = await fetch("/api/realized-pnl", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({action: "update", row: rpEditingRow, name, amount})
+            });
+            const data = await res.json();
+            if (data.success) {
+                rpEditingRow = null;
+                document.getElementById("rpEditHint").style.display = "none";
+                document.getElementById("rpCancelEdit").style.display = "none";
+                document.getElementById("rpSaveBtn").textContent = "💾 保存";
+                document.getElementById("rpName").style.display = "";
+                document.getElementById("rpNameInput").style.display = "none";
+                loadRealizedPnlHistory();
+                refreshData();
+            } else {
+                alert("更新失败: " + (data.error || ""));
+            }
+        } catch(e) {
+            alert("更新失败: " + e.message);
+        }
+        return;
+    }
+
+    // 新增模式
     const name = document.getElementById("rpName").value;
     const amount = parseFloat(document.getElementById("rpAmount").value);
     if (!name) { alert("请选择股票"); return; }
@@ -1256,12 +1300,68 @@ async function loadRealizedPnlHistory() {
             container.innerHTML = '<div style="text-align:center;color:#ccc;font-size:12px;padding:20px;">暂无清仓记录</div>';
             return;
         }
-        container.innerHTML = `<table style="font-size:12px;width:100%;"><thead><tr><th>日期</th><th>名称</th><th class="num">实现盈亏</th></tr></thead><tbody>${records.map(r => {
+        container.innerHTML = `<table style="font-size:12px;width:100%;"><thead><tr><th>日期</th><th>名称</th><th class="num">实现盈亏</th><th style="width:80px;">操作</th></tr></thead><tbody>${records.map(r => {
             const pnl = r.pnl || 0;
-            return `<tr><td style="font-size:11px;color:#888;white-space:nowrap;">${r.date}</td><td>${escapeHtml(r.name)}</td><td class="num" style="font-weight:600;color:${pnl>=0?'#CC0000':'#009900'}">${pnl>=0?'+':''}${pnl.toLocaleString()}</td></tr>`;
+            return `<tr><td style="font-size:11px;color:#888;white-space:nowrap;">${r.date}</td><td>${escapeHtml(r.name)}</td><td class="num" style="font-weight:600;color:${pnl>=0?'#CC0000':'#009900'}">${pnl>=0?'+':''}${pnl.toLocaleString()}</td>
+                <td style="white-space:nowrap;">
+                    <button class="btn btn-sm" style="background:none;color:#2F5496;border:none;cursor:pointer;font-size:11px;padding:2px 4px;" onclick="editRealizedPnl(${r.row})">✏️</button>
+                    <button class="btn btn-sm" style="background:none;color:#CC0000;border:none;cursor:pointer;font-size:11px;padding:2px 4px;" onclick="deleteRealizedPnl(${r.row})">🗑️</button>
+                </td></tr>`;
         }).join("")}</tbody></table>`;
+        // 缓存记录供编辑/删除使用
+        window._rpRecords = records;
     } catch(e) {
         container.innerHTML = '<div style="text-align:center;color:#CC0000;font-size:12px;">加载失败</div>';
+    }
+}
+
+function editRealizedPnl(row) {
+    const records = window._rpRecords || [];
+    const r = records.find(x => x.row === row);
+    if (!r) { alert("找不到该记录"); return; }
+    rpEditingRow = row;
+    document.getElementById("rpEditHint").style.display = "inline";
+    document.getElementById("rpCancelEdit").style.display = "inline";
+    document.getElementById("rpSaveBtn").textContent = "💾 更新";
+    document.getElementById("rpName").style.display = "none";
+    const nameInput = document.getElementById("rpNameInput");
+    nameInput.style.display = "";
+    nameInput.value = r.name;
+    document.getElementById("rpAmount").value = r.pnl;
+}
+
+function cancelEditRealizedPnl() {
+    rpEditingRow = null;
+    document.getElementById("rpEditHint").style.display = "none";
+    document.getElementById("rpCancelEdit").style.display = "none";
+    document.getElementById("rpSaveBtn").textContent = "💾 保存";
+    document.getElementById("rpName").style.display = "";
+    document.getElementById("rpNameInput").style.display = "none";
+    document.getElementById("rpNameInput").value = "";
+    document.getElementById("rpAmount").value = "";
+}
+
+async function deleteRealizedPnl(row) {
+    const records = window._rpRecords || [];
+    const r = records.find(x => x.row === row);
+    if (!r) { alert("找不到该记录"); return; }
+    if (!confirm(`确定删除「${r.name}」的清仓记录？`)) return;
+    try {
+        const res = await fetch("/api/realized-pnl", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({action: "delete", row})
+        });
+        const data = await res.json();
+        if (data.success) {
+            if (rpEditingRow === row) cancelEditRealizedPnl();
+            loadRealizedPnlHistory();
+            refreshData();
+        } else {
+            alert("删除失败: " + (data.error || ""));
+        }
+    } catch(e) {
+        alert("删除失败: " + e.message);
     }
 }
 

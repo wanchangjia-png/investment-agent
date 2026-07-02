@@ -857,14 +857,36 @@ class PortfolioHandler(BaseHTTPRequestHandler):
 
         elif self.path == "/api/realized-pnl":
             try:
-                name = data.get("name", "").strip()
-                amount = float(data.get("amount", 0))
-                if not name or amount == 0:
-                    self._send_json({"success": False, "error": "请选择股票并输入盈亏金额"})
-                    return
-                agent.record_realized_pnl(name, amount=amount)
-                agent.sync_portfolio_to_github()
-                self._send_json({"success": True})
+                action = data.get("action", "create")
+                if action == "update":
+                    row = data.get("row")
+                    name = data.get("name", "").strip()
+                    amount = data.get("amount")
+                    if not row:
+                        self._send_json({"success": False, "error": "缺少行号"})
+                        return
+                    ok = agent.update_realized_pnl(int(row), name=name or None, amount=amount)
+                    if ok:
+                        agent.sync_portfolio_to_github()
+                    self._send_json({"success": ok})
+                elif action == "delete":
+                    row = data.get("row")
+                    if not row:
+                        self._send_json({"success": False, "error": "缺少行号"})
+                        return
+                    ok = agent.delete_realized_pnl(int(row))
+                    if ok:
+                        agent.sync_portfolio_to_github()
+                    self._send_json({"success": ok})
+                else:
+                    name = data.get("name", "").strip()
+                    amount = float(data.get("amount", 0))
+                    if not name or amount == 0:
+                        self._send_json({"success": False, "error": "请选择股票并输入盈亏金额"})
+                        return
+                    agent.record_realized_pnl(name, amount=amount)
+                    agent.sync_portfolio_to_github()
+                    self._send_json({"success": True})
             except Exception as e:
                 self._send_json({"success": False, "error": str(e)}, 500)
 
