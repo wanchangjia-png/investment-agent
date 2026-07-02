@@ -172,6 +172,28 @@ def save_holdings(holdings_data):
     ws.cell(row=tr, column=8, value=sum(h["市值"] for h in new_holdings))
     ws.cell(row=tr, column=9, value=sum(h["盈亏"] for h in new_holdings))
 
+    # 检测股票减少/清仓，记录已实现盈亏
+    def _key(h): return (h["类别"], h["账户"], h["名称"])
+    old_map = {_key(h): h for h in old_holdings if h["名称"] and h["类别"] == "股票"}
+    new_map = {_key(h): h for h in new_holdings if h["名称"] and h["类别"] == "股票"}
+    for k in set(old_map) - set(new_map):
+        oh = old_map[k]
+        qty = int(oh["数量"]) if oh["数量"] else 0
+        price = oh["现价"] or 0
+        cost = oh["成本价"] or 0
+        if qty > 0 and price > 0 and cost > 0:
+            record_realized_pnl(oh["名称"], qty, price, cost, "清仓")
+    for k in set(old_map) & set(new_map):
+        oh = old_map[k]; nh = new_map[k]
+        old_qty = int(oh["数量"]) if oh["数量"] else 0
+        new_qty = int(nh["数量"]) if nh["数量"] else 0
+        if old_qty > new_qty:
+            diff = old_qty - new_qty
+            price = oh["现价"] or 0
+            cost = oh["成本价"] or 0
+            if diff > 0 and price > 0 and cost > 0:
+                record_realized_pnl(oh["名称"], diff, price, cost, "卖出")
+
     # 记录编辑日志
     _log_edit(old_holdings, new_holdings, wb)
 
@@ -359,6 +381,86 @@ def _weekday_cn(date_str):
         return weekdays[dt.weekday()]
     except Exception:
         return ""
+
+
+# ============ 已实现盈亏 ============
+def record_realized_pnl(name, qty, price, cost, action="卖出"):
+    """记录已实现盈亏
+    qty: 变动的股数（正数）
+    price: 卖出时价格
+    cost: 成本价
+    action: "卖出" 或 "清仓"
+    """
+    pnl = round((price - cost) * qty, 2)
+    if pnl == 0:
+        return
+    try:
+        wb = openpyxl.load_workbook(EXCEL_PATH)
+        if "已实现盈亏" not in wb.sheetnames:
+            ws = wb.create_sheet("已实现盈亏")
+            ws.append(["日期", "名称", "操作", "股数", "卖出价", "成本价", "实现盈亏"])
+            ws.column_dimensions["A"].width = 16
+            ws.column_dimensions["B"].width = 12
+            ws.column_dimensions["C"].width = 8
+            ws.column_dimensions["D"].width = 8
+            ws.column_dimensions["E"].width = 10
+            ws.column_dimensions["F"].width = 10
+            ws.column_dimensions["G"].width = 14
+        else:
+            ws = wb["已实现盈亏"]
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        ws.append([now, name, action, qty, round(price, 2), round(cost, 2), round(pnl, 2)])
+        wb.save(EXCEL_PATH)
+        wb.close()
+        print(f"📝 已记录已实现盈亏: {name} {action} {qty}股, 盈亏 {pnl:+,.0f}元")
+    except Exception as e:
+        print(f"⚠️ 记录已实现盈亏失败: {e}")
+
+
+def get_realized_pnl_total():
+    """获取累计已实现盈亏总额"""
+    try:
+        wb = openpyxl.load_workbook(EXCEL_PATH)
+        if "已实现盈亏" not in wb.sheetnames:
+            wb.close()
+            return 0
+        ws = wb["已实现盈亏"]
+        total = 0
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[6] is not None:
+                total += float(row[6])
+        wb.close()
+        return round(total, 2)
+    except Exception:
+        return 0
+
+
+def get_realized_pnl_records():
+    """获取所有已实现盈亏记录"""
+    try:
+        wb = openpyxl.load_workbook(EXCEL_PATH)
+        if "已实现盈亏" not in wb.sheetnames:
+            wb.close()
+            return []
+        ws = wb["已实现盈亏"]
+        records = []
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[0] is None:
+                continue
+            records.append({
+                "date": str(row[0]),
+                "name": str(row[1]) if row[1] else "",
+                "action": str(row[2]) if row[2] else "",
+                "qty": int(row[3]) if row[3] else 0,
+                "price": float(row[4]) if row[4] else 0,
+                "cost": float(row[5]) if row[5] else 0,
+                "pnl": float(row[6]) if row[6] else 0,
+            })
+        wb.close()
+        records.reverse()
+        return records
+    except Exception:
+        return []
 
 
 # ============ 出入金记录 ============
@@ -571,7 +673,7 @@ def fetch_kline():
 
 # ============ 计算 ============
 def calculate(holdings):
-    """计算各项指标"""
+    """计算各项指标（含已实现盈亏）"""
     total_market_value = 0
     total_pnl = 0
     total_cost = 0
@@ -587,6 +689,10 @@ def calculate(holdings):
         elif h["类别"] == "黄金":
             total_market_value += mv
             total_pnl += pnl
+
+    # 加上已实现盈亏
+    realized = get_realized_pnl_total()
+    total_pnl += realized
 
     # 按账户汇总
     accounts = {}

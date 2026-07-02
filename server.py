@@ -417,10 +417,15 @@ def api_data():
         for f in all_flows if f["date"].startswith(today)
     )
 
+    realized_pnl = agent.get_realized_pnl_total()
+    unrealized_pnl = total_pnl - realized_pnl
+
     return {
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "total_value": total_value,
         "total_pnl": total_pnl,
+        "unrealized_pnl": unrealized_pnl,
+        "realized_pnl": realized_pnl,
         "total_return_pct": round(total_pnl / (total_value - total_pnl) * 100, 2) if (total_value - total_pnl) > 0 else 0,
         "net_capital": net_capital,
         "true_pnl": true_pnl,

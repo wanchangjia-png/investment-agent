@@ -533,6 +533,20 @@ function render() {
     const retEl = document.getElementById("kpiReturn");
     retEl.textContent = (d.total_return_pct >= 0 ? "+" : "") + d.total_return_pct + "%";
     retEl.style.color = d.total_return_pct >= 0 ? "#CC0000" : "#009900";
+    // 已实现/未实现盈亏 breakdown (show in subtitle area)
+    const kpiReturnEl = document.getElementById("kpiReturn");
+    if (d.realized_pnl) {
+        const r = d.realized_pnl, u = d.unrealized_pnl || 0;
+        const subEl = document.getElementById("kpiPnlBreakdown") || (() => {
+            const el = document.createElement("div");
+            el.id = "kpiPnlBreakdown";
+            el.style.cssText = "font-size:10px;color:#999;line-height:1.3;";
+            kpiReturnEl.after(el);
+            return el;
+        })();
+        subEl.textContent = `已实现 ${r>=0?'+':''}${r.toLocaleString()}  持仓 ${u>=0?'+':''}${u.toLocaleString()}`;
+        subEl.style.color = "#999";
+    }
     document.getElementById("kpiCount").textContent = d.stocks.length;
 
     // 今日盈亏（较前日净值记录）
