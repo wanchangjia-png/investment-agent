@@ -13,8 +13,10 @@
 """
 import sys
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
+
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 import openpyxl
 from openpyxl.utils import get_column_letter
@@ -182,7 +184,7 @@ def save_holdings(holdings_data):
 
 def _log_edit(old_holdings, new_holdings, wb):
     """比较新旧持仓，记录改动到编辑记录 sheet"""
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
     # 构建 key → item 映射
     def key(h): return (h["类别"], h["账户"], h["名称"])
@@ -279,7 +281,7 @@ def save_networth_snapshot(total, pnl, detail):
         tz = timezone(timedelta(hours=8))
         now = datetime.now(tz)
     except Exception:
-        now = datetime.now()
+        now = datetime.now(BEIJING_TZ)
     market_closed = now.hour > 15 or (now.hour == 15 and now.minute >= 0)
     if not market_closed:
         print(f"ℹ️  当前 {now.strftime('%H:%M')}，A股未收盘（15:00），跳过净值记录")
@@ -390,7 +392,7 @@ def record_realized_pnl(name, qty=0, price=0, cost=0, action="清仓", amount=No
             ws.column_dimensions["G"].width = 14
         else:
             ws = wb["已实现盈亏"]
-        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        now = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M")
         ws.append([now, name, action, qty, round(price, 2), round(cost, 2), round(pnl, 2)])
         wb.save(EXCEL_PATH)
         wb.close()
@@ -557,7 +559,7 @@ def add_capital_flow(amount, flow_type, note=""):
             ws.column_dimensions["D"].width = 30
         else:
             ws = wb["出入金"]
-        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        now = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M")
         ws.append([now, flow_type, amount, note])
         wb.save(EXCEL_PATH)
         wb.close()
@@ -619,7 +621,7 @@ def get_net_capital():
                     ws.column_dimensions["D"].width = 30
                 else:
                     ws = wb["出入金"]
-                ws.append([datetime.now().strftime("%Y-%m-%d %H:%M"), "存入", round(cost, 2), "初始本金（自动记录）"])
+                ws.append([datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M"), "存入", round(cost, 2), "初始本金（自动记录）"])
                 wb.save(EXCEL_PATH)
                 wb.close()
                 return round(cost, 2), 1
@@ -841,7 +843,7 @@ def print_holdings(holdings):
     total_value, total_pnl, accounts = calculate(holdings)
 
     print("\n" + "=" * 80)
-    print(f"📊 投资持仓全景  ({datetime.now().strftime('%Y-%m-%d %H:%M')})")
+    print(f"📊 投资持仓全景  ({datetime.now(BEIJING_TZ).strftime('%Y-%m-%d %H:%M')})")
     print("=" * 80)
 
     print(f"\n{'资产名称':<12} {'现价':>10} {'成本':>10} {'数量':>8} {'市值':>12} {'盈亏':>12} {'收益率':>10} {'占比':>8}")
@@ -875,7 +877,7 @@ def print_holdings(holdings):
 
 def print_allocation(holdings):
     """打印资产配置"""
-    print(f"\n📊 资产配置分析 ({datetime.now().strftime('%Y-%m-%d %H:%M')})")
+    print(f"\n📊 资产配置分析 ({datetime.now(BEIJING_TZ).strftime('%Y-%m-%d %H:%M')})")
     print("=" * 60)
 
     by_type = {}
@@ -920,7 +922,7 @@ def print_report(holdings):
 
     print("\n" + "=" * 60)
     print(f"📋 投资组合报告")
-    print(f"   生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    print(f"   生成时间: {datetime.now(BEIJING_TZ).strftime('%Y-%m-%d %H:%M')}")
     print("=" * 60)
 
     print(f"\n📊 总览")
@@ -1129,7 +1131,7 @@ def generate_advice(holdings, risks):
         t = h["类别"]
         by_type[t] = by_type.get(t, 0) + h["市值"]
 
-    now = datetime.now().strftime("%Y-%m-%d")
+    now = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d")
     advice = f"""
 ╔══════════════════════════════════════════════════════════════╗
 ║             📋 每日投资建议 · {now}              ║
@@ -1295,7 +1297,7 @@ def generate_advice(holdings, risks):
 
 def save_advice(advice_text):
     """保存每日建议到文件"""
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d")
     output_dir = DATA_DIR / "每日建议"
     output_dir.mkdir(exist_ok=True)
     path = output_dir / f"{today}.txt"
@@ -1308,7 +1310,7 @@ def print_daily(holdings):
     """每日简报：先刷新行情 → 记录净值 → 风险诊断 → 生成建议"""
     print("=" * 60)
     print(f"  📋 投资追踪 · 每日简报")
-    print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    print(f"  {datetime.now(BEIJING_TZ).strftime('%Y-%m-%d %H:%M')}")
     print("=" * 60)
 
     # 1. 行情快照
@@ -1466,7 +1468,7 @@ def sync_portfolio_to_github():
 
     try:
         data = json.dumps({
-            "message": f"auto-sync portfolio.xlsx {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            "message": f"auto-sync portfolio.xlsx {datetime.now(BEIJING_TZ).strftime('%Y-%m-%d %H:%M')}",
             "content": content,
             "sha": sha,
         }).encode("utf-8")
