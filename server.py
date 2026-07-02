@@ -911,6 +911,7 @@ class PortfolioHandler(BaseHTTPRequestHandler):
 
 
 def main():
+    HTTPServer.allow_reuse_address = True
     server = HTTPServer((HOST, PORT), PortfolioHandler)
     print(f"\n{'='*50}")
     print(f"  📊 投资追踪 Agent 已启动！")
