@@ -858,13 +858,11 @@ class PortfolioHandler(BaseHTTPRequestHandler):
         elif self.path == "/api/realized-pnl":
             try:
                 name = data.get("name", "").strip()
-                qty = int(data.get("qty", 0))
-                price = float(data.get("price", 0))
-                cost = float(data.get("cost", 0))
-                if not name or qty <= 0 or price <= 0 or cost <= 0:
-                    self._send_json({"success": False, "error": "请完整填写"})
+                amount = float(data.get("amount", 0))
+                if not name or amount == 0:
+                    self._send_json({"success": False, "error": "请选择股票并输入盈亏金额"})
                     return
-                agent.record_realized_pnl(name, qty, price, cost, "清仓")
+                agent.record_realized_pnl(name, amount=amount)
                 agent.sync_portfolio_to_github()
                 self._send_json({"success": True})
             except Exception as e:

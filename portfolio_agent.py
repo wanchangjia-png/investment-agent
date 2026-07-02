@@ -362,14 +362,18 @@ def _weekday_cn(date_str):
 
 
 # ============ 已实现盈亏 ============
-def record_realized_pnl(name, qty, price, cost, action="卖出"):
+def record_realized_pnl(name, qty=0, price=0, cost=0, action="清仓", amount=None):
     """记录已实现盈亏
     qty: 变动的股数（正数）
     price: 卖出时价格
     cost: 成本价
     action: "卖出" 或 "清仓"
+    amount: 直接指定盈亏金额（手动输入时使用）
     """
-    pnl = round((price - cost) * qty, 2)
+    if amount is not None:
+        pnl = round(amount, 2)
+    else:
+        pnl = round((price - cost) * qty, 2)
     if pnl == 0:
         return
     try:
