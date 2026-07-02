@@ -286,14 +286,6 @@ tr:hover { background: #f8f9ff; }
             </div>
         </div>
         <div class="chat-messages" id="chatMessages">
-            <div class="msg assistant">
-                👋 你好！我是你的投资 Agent。我可以：
-                <br>• 分析你的持仓和风险
-                <br>• 给仓位管理建议
-                <br>• 联网搜索最新市场信息
-                <br>• 回答理财问题
-                <br><br>试试问我："帮我分析持仓风险" 或 "查一下今天A股行情"
-            </div>
         </div>
         <div class="chat-input-area">
             <div class="chat-input-row">
@@ -973,11 +965,41 @@ async function sendMessage() {
     isStreaming = false;
     sendBtn.disabled = false;
     statusEl.textContent = "";
+    saveChatHistory();
 }
 
 function clearChat() {
     if (!confirm("清空对话？")) return;
+    localStorage.removeItem("chatHistory");
     document.getElementById("chatMessages").innerHTML = `<div class="msg assistant">👋 对话已清空，请问有什么投资问题？</div>`;
+}
+
+// ============ 聊天持久化 ============
+function saveChatHistory() {
+    const els = document.querySelectorAll("#chatMessages .msg.user, #chatMessages .msg.assistant");
+    const msgs = [];
+    els.forEach(el => {
+        if (el.querySelector(".spinner")) return;
+        const role = el.classList.contains("user") ? "user" : "assistant";
+        const text = el.textContent || "";
+        if (text.trim()) msgs.push({role, text});
+    });
+    try { localStorage.setItem("chatHistory", JSON.stringify(msgs)); } catch(e) {}
+}
+
+function loadChatHistory() {
+    try {
+        const saved = localStorage.getItem("chatHistory");
+        if (!saved) return false;
+        const msgs = JSON.parse(saved);
+        if (!msgs.length) return false;
+        const container = document.getElementById("chatMessages");
+        container.innerHTML = msgs.map(m =>
+            `<div class="msg ${m.role}">${marked(m.text)}</div>`
+        ).join("");
+        container.scrollTop = container.scrollHeight;
+        return true;
+    } catch(e) { return false; }
 }
 
 // ============ 设置 ============
@@ -1657,6 +1679,18 @@ function marked(text) {
 
 // ============ 初始化 ============
 loadData();
+
+// 加载聊天历史（没有历史则显示默认问候）
+if (!loadChatHistory()) {
+    document.getElementById("chatMessages").innerHTML = `<div class="msg assistant">
+        👋 你好！我是你的投资 Agent。我可以：
+        <br>• 分析你的持仓和风险
+        <br>• 给仓位管理建议
+        <br>• 联网搜索最新市场信息
+        <br>• 回答理财问题
+        <br><br>试试问我："帮我分析持仓风险" 或 "查一下今天A股行情"
+    </div>`;
+}
 
 // 加载配置 badge
 fetch("/api/config").then(r=>r.json()).then(cfg => {
