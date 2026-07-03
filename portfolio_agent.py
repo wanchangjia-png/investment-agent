@@ -633,19 +633,18 @@ def get_net_capital():
 # 接口: http://qt.gtimg.cn/q=sz000858,sz002850,...
 # 返回格式: v_sz000858="...~name~price~...";
 
-STOCK_MARKET_MAP = {
-    "6": "sh",  # 上海 600/601/603/605/688
-    "0": "sz",  # 深圳 000/001/002
-    "3": "sz",  # 创业板 300/301
-    "5": "sh",  # 上海 ETF 510/512/513/516/517/518/560/561/562/563
-    "8": "bj",  # 北交所 8
-    "4": "bj",  # 北交所 4
-}
+PREFIXES = {"sh", "sz", "bj"}  # 腾讯API支持的交易所前缀
 
-def _code_to_tdx(code):
-    """将6位代码转为腾讯API格式（带市场前缀）"""
-    prefix = STOCK_MARKET_MAP.get(code[0], "sz")
-    return f"{prefix}{code}"
+def _code_variants(code):
+    """生成一个股票代码的可能完整变体（前缀+代码），优先匹配已知规则"""
+    first = code[0]
+    if first == "6" or first == "5":
+        order = ["sh", "sz"]  # 上海主板/ETF 为主
+    elif first in ("0", "1", "2", "3"):
+        order = ["sz", "sh"]  # 深圳为主
+    else:
+        order = ["sz", "sh", "bj"]
+    return [f"{p}{code}" for p in order]
 
 def fetch_prices():
     """通过腾讯财经 API 获取实时股票价格，返回 (prices, prev_closes, failed)"""
@@ -667,8 +666,14 @@ def fetch_prices():
     for name, code in STOCK_CODES.items():
         stock_names[code] = name
     if stock_names:
-        tdx_codes = [_code_to_tdx(c) for c in stock_names.keys()]
-        url = "http://qt.gtimg.cn/q=" + ",".join(tdx_codes)
+        # 对每个股票代码生成所有前缀变体（sh/sz/bj），哪个有数据用哪个
+        tdx_variants = []
+        code_to_name = {}
+        for code in stock_names.keys():
+            for variant in _code_variants(code):
+                tdx_variants.append(variant)
+                code_to_name[variant] = stock_names[code]
+        url = "http://qt.gtimg.cn/q=" + ",".join(tdx_variants)
         try:
             req = urllib.request.Request(url, headers={
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
@@ -681,20 +686,23 @@ def fetch_prices():
                     continue
                 parts = line.split("~")
                 if len(parts) >= 5:
-                    code_full = parts[0].split("=")[0].strip("v_")
-                    code = code_full[2:]  # 去掉 sz/sh 前缀
-                    if code in stock_names:
+                    ticker = parts[0].split("=")[0].strip("v_")  # e.g. "sh512480"
+                    name_from_api = parts[1] if len(parts) > 1 else ""
+                    if ticker in code_to_name and name_from_api and name_from_api != "?":
+                        stock_name = code_to_name[ticker]
                         try:
                             price = float(parts[3]) if parts[3] else 0
                             prev_close = float(parts[4]) if parts[4] else 0
                             if price > 0:
-                                prices[stock_names[code]] = price
-                                if prev_close > 0:
-                                    prev_closes[stock_names[code]] = prev_close
+                                # 该股票可能同时命中多个前缀，只保留第一次有效的
+                                if stock_name not in prices:
+                                    prices[stock_name] = price
+                                if prev_close > 0 and stock_name not in prev_closes:
+                                    prev_closes[stock_name] = prev_close
                             else:
-                                failed.append(stock_names[code])
+                                failed.append(stock_name)
                         except ValueError:
-                            failed.append(stock_names[code])
+                            failed.append(stock_name)
         except Exception as e:
             print(f"⚠️  A股行情获取失败: {e}")
             failed.extend(stock_names.values())
@@ -716,6 +724,9 @@ def fetch_prices():
     except Exception as e:
         print(f"⚠️ 黄金价格获取失败: {e}")
         failed.append("黄金")
+
+    # 去重失败列表
+    failed = list(dict.fromkeys(failed))
 
     return prices, prev_closes, failed
 
