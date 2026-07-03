@@ -117,6 +117,12 @@ def _build_system_prompt():
     def total_alloc(mv):
         return mv / total_value * 100 if total_value > 0 else 0
 
+    # 加载记忆
+    memories = agent.load_memories()
+    mem_text = ""
+    if memories:
+        mem_text = "\n".join(f"- {m}" for m in memories[-20:])
+
     prompt = f"""你是万万的专属投资理财助手，名叫「万万的投资 Agent」。
 
 当前日期：{date_str}（北京时间）
@@ -211,6 +217,11 @@ def _build_system_prompt():
     except Exception:
         pass
 
+    # AI 记忆
+    if mem_text:
+        prompt += "\n### 记忆（来自之前的对话）：\n"
+        prompt += mem_text + "\n"
+
     prompt += """
 
 ## 重要规则（必须遵守）
@@ -229,7 +240,12 @@ def _build_system_prompt():
 ## 注意
 - 你只提供分析建议，不构成投资指令
 - 所有操作建议需要结合万万自己的判断
-- 数据来自万万手动维护的持仓表，可能有延迟"""
+- 数据来自万万手动维护的持仓表，可能有延迟
+
+## 记忆功能
+- 你有长期记忆能力，之前的对话要点会显示在"记忆"中
+- 如果你想记住用户的重要偏好、决定或结论，在回答末尾加上 <save_memory>内容</save_memory>
+- 每次对话开始时你会看到之前保存的记忆"""
     return prompt
 
 
@@ -871,9 +887,17 @@ class PortfolioHandler(BaseHTTPRequestHandler):
 
             messages = data.get("messages", [])
             search_enabled = data.get("search", True)
+            full_response = ""
 
             for chunk in chat_stream(messages, search_enabled):
                 try:
+                    # 累积文本，提取记忆
+                    try:
+                        cdata = json.loads(chunk) if chunk.startswith("{") else {}
+                        if cdata.get("type") == "text":
+                            full_response += cdata.get("content", "")
+                    except Exception:
+                        pass
                     self.wfile.write(f"data: {chunk}\n\n".encode("utf-8"))
                     self.wfile.flush()
                 except BrokenPipeError:
@@ -883,6 +907,17 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                 self.wfile.flush()
             except BrokenPipeError:
                 pass
+
+            # 保存记忆
+            mem_match = re.findall(r'<save_memory>(.*?)</save_memory>', full_response, re.DOTALL)
+            for mem_content in mem_match:
+                mem_content = mem_content.strip()
+                if mem_content:
+                    try:
+                        agent.save_memory(mem_content)
+                        print(f"🧠 保存记忆: {mem_content[:50]}...")
+                    except Exception:
+                        pass
 
         elif self.path == "/api/save-config":
             key = data.get("key", "")

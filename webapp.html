@@ -1122,7 +1122,8 @@ async function sendMessage() {
                     const data = JSON.parse(jsonStr);
                     if (data.type === "text") {
                         fullText += data.content;
-                        aiEl.innerHTML = marked(fullText) + '<span class="streaming-cursor"></span>';
+                        const displayText = fullText.replace(/<save_memory>.*?<\/save_memory>/g, '');
+                        aiEl.innerHTML = marked(displayText) + '<span class="streaming-cursor"></span>';
                         messages.scrollTop = messages.scrollHeight;
                     } else if (data.type === "search_status") {
                         hasSearchStatus = true;
@@ -1136,7 +1137,8 @@ async function sendMessage() {
         // 移除光标
         if (fullText) {
             const el = document.getElementById(aiMsgId);
-            if (el) el.innerHTML = marked(fullText);
+            const displayText = fullText.replace(/<save_memory>.*?<\/save_memory>/g, '');
+            if (el) el.innerHTML = marked(displayText);
         }
     } catch(e) {
         const el = document.getElementById(aiMsgId);

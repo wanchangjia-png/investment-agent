@@ -254,6 +254,64 @@ def load_edit_log():
         return []
 
 
+# ============ AI 记忆 ============
+def save_memory(content):
+    """保存一条记忆到 Excel（自动去重，最多保留 50 条）"""
+    try:
+        wb = openpyxl.load_workbook(EXCEL_PATH)
+        if "记忆" not in wb.sheetnames:
+            ws = wb.create_sheet("记忆")
+            ws.append(["内容"])
+        else:
+            ws = wb["记忆"]
+            # 去重：如果同样的内容已存在，不重复添加
+            for row in ws.iter_rows(min_row=2, max_col=1, values_only=True):
+                if row[0] and str(row[0]).strip() == content.strip():
+                    wb.close()
+                    return False
+        ws.append([content.strip()])
+        # 限制最多 50 条，删最早的
+        while ws.max_row > 51:
+            ws.delete_rows(2)
+        wb.save(EXCEL_PATH)
+        wb.close()
+        return True
+    except Exception:
+        return False
+
+
+def load_memories():
+    """加载所有记忆"""
+    try:
+        wb = openpyxl.load_workbook(EXCEL_PATH)
+        if "记忆" not in wb.sheetnames:
+            wb.close()
+            return []
+        ws = wb["记忆"]
+        memories = []
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[0]:
+                memories.append(str(row[0]).strip())
+        wb.close()
+        return memories
+    except Exception:
+        return []
+
+
+def clear_memories():
+    """清空所有记忆"""
+    try:
+        wb = openpyxl.load_workbook(EXCEL_PATH)
+        if "记忆" in wb.sheetnames:
+            ws = wb["记忆"]
+            ws.delete_rows(2, ws.max_row)
+            wb.save(EXCEL_PATH)
+        wb.close()
+        return True
+    except Exception:
+        return False
+
+
 def save_prices(holdings):
     """将更新后的价格写回 Excel"""
     wb = openpyxl.load_workbook(EXCEL_PATH)
