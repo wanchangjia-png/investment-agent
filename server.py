@@ -328,11 +328,22 @@ def chat_stream(messages, search_enabled=True):
 def _fetch_prev_closes():
     """从腾讯 API 获取所有股票的昨收价"""
     import urllib.request
-    codes = agent.STOCK_CODES
+    holdings = agent.load_portfolio()
+    codes = {}
+    for h in holdings:
+        if h["类别"] == "股票" and h.get("代码"):
+            codes[h["名称"]] = h["代码"]
+    for name, code in agent.STOCK_CODES.items():
+        if name not in codes:
+            codes[name] = code
     if not codes:
         return {}
-    stock_names = {v: k for k, v in codes.items()}
-    tdx_codes = [agent._code_to_tdx(c) for c in codes.values()]
+    tdx_codes = []
+    code_to_name = {}
+    for name, code in codes.items():
+        for variant in agent._code_variants(code):
+            tdx_codes.append(variant)
+            code_to_name[variant] = name
     url = "http://qt.gtimg.cn/q=" + ",".join(tdx_codes)
     prev_closes = {}
     try:
@@ -345,13 +356,13 @@ def _fetch_prev_closes():
                 continue
             parts = line.split("~")
             if len(parts) >= 5:
-                code_full = parts[0].split("=")[0].strip("v_")
-                code = code_full[2:]
-                name = stock_names.get(code)
-                if name:
+                ticker = parts[0].split("=")[0].strip("v_")
+                name_from_api = parts[1] if len(parts) > 1 else ""
+                if ticker in code_to_name and name_from_api and name_from_api != "?":
+                    name = code_to_name[ticker]
                     try:
                         pc = float(parts[4]) if parts[4] else 0
-                        if pc > 0:
+                        if pc > 0 and name not in prev_closes:
                             prev_closes[name] = pc
                     except ValueError:
                         pass
