@@ -105,6 +105,10 @@ def _portfolio_summary():
 
 def _build_system_prompt():
     """构建包含持仓上下文的 system prompt"""
+    from datetime import timezone, timedelta
+    now = datetime.now(timezone(timedelta(hours=8)))
+    date_str = now.strftime("%Y年%m月%d日 %A")
+
     holdings = agent.load_portfolio()
     total_value, total_pnl, accounts = agent.calculate(holdings)
     risks = agent.risk_analysis(holdings)
@@ -114,6 +118,8 @@ def _build_system_prompt():
         return mv / total_value * 100 if total_value > 0 else 0
 
     prompt = f"""你是万万的专属投资理财助手，名叫「万万的投资 Agent」。
+
+当前日期：{date_str}（北京时间）
 
 ## 你的角色
 - 你是专业的个人理财顾问，擅长 A 股投资分析、仓位管理、资产配置
@@ -193,45 +199,69 @@ def _build_system_prompt():
 def web_search(query, max_results=5):
     """联网搜索，返回搜索结果列表"""
     results = []
-    encoded = urllib.parse.quote(query)
-    url = f"https://lite.duckduckgo.com/lite/?q={encoded}"
 
-    try:
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
-        })
-        resp = urllib.request.urlopen(req, timeout=10)
-        html = resp.read().decode("utf-8", errors="ignore")
-        # 解析 DuckDuckGo Lite 结果
-        links = re.findall(r'<a[^>]*href="([^"]*)"[^>]*class="result-link"[^>]*>(.*?)</a>', html, re.DOTALL)
-        snippets = re.findall(r'<td[^>]*class="result-snippet"[^>]*>(.*?)</td>', html, re.DOTALL)
-        for i in range(min(len(links), max_results)):
-            url_text = links[i][0] if i < len(links) else ""
-            title = re.sub(r'<[^>]+>', '', links[i][1]) if i < len(links) else ""
-            snippet = re.sub(r'<[^>]+>', '', snippets[i]) if i < len(snippets) else ""
-            if url_text and not url_text.startswith("http"):
-                url_text = "https://" + url_text
-            results.append({"title": title.strip(), "url": url_text, "snippet": snippet.strip()})
-    except Exception:
-        pass
-
-    if not results:
-        # 备选方案
+    # 用 POST 方式请求 html.duckduckgo.com（比 lite 更稳定）
+    for attempt in range(2):
         try:
-            url2 = f"https://html.duckduckgo.com/html/?q={encoded}"
-            req2 = urllib.request.Request(url2, headers={
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
-            })
-            resp2 = urllib.request.urlopen(req2, timeout=10)
-            html2 = resp2.read().decode("utf-8", errors="ignore")
-            results2 = re.findall(r'<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>', html2, re.DOTALL)
-            snippets2 = re.findall(r'<a[^>]*class="result__snippet"[^>]*>(.*?)</a>', html2, re.DOTALL)
-            for i in range(min(len(results2), max_results)):
-                title = re.sub(r'<[^>]+>', '', results2[i][1])
-                snippet = re.sub(r'<[^>]+>', '', snippets2[i]) if i < len(snippets2) else ""
-                results.append({"title": title.strip(), "url": results2[i][0], "snippet": snippet.strip()})
-        except Exception:
-            pass
+            if attempt == 0:
+                data = urllib.parse.urlencode({"q": query}).encode()
+                req = urllib.request.Request(
+                    "https://html.duckduckgo.com/html/",
+                    data=data,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    }
+                )
+            else:
+                # 备选：lite 模式
+                encoded = urllib.parse.quote(query)
+                req = urllib.request.Request(
+                    f"https://lite.duckduckgo.com/lite/?q={encoded}",
+                    headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+                )
+
+            resp = urllib.request.urlopen(req, timeout=15)
+            html = resp.read().decode("utf-8", errors="ignore")
+
+            if attempt == 0:
+                # 解析 HTML 模式：找 result__a（标题链接）和 result__snippet
+                titles_links = re.findall(r'<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>', html, re.DOTALL)
+                snippets = re.findall(r'<a[^>]*class="result__snippet"[^>]*>(.*?)</a>', html, re.DOTALL)
+                for i in range(min(len(titles_links), max_results)):
+                    url = titles_links[i][0]
+                    title = re.sub(r'<[^>]+>', '', titles_links[i][1]).strip()
+                    snippet = re.sub(r'<[^>]+>', '', snippets[i]).strip() if i < len(snippets) else ""
+                    if url and not url.startswith("http"):
+                        url = "https://" + url
+                    results.append({"title": title, "url": url, "snippet": snippet})
+
+                # 如果上面没解析到，试试更宽松的匹配
+                if not results:
+                    all_links = re.findall(r'<a[^>]*class="result[^"]*"[^>]*href="([^"]*)"[^>]*>(.*?)</a>', html, re.DOTALL)
+                    for i in range(min(len(all_links), max_results)):
+                        url = all_links[i][0]
+                        title = re.sub(r'<[^>]+>', '', all_links[i][1]).strip()
+                        if url and not url.startswith("http"):
+                            url = "https://" + url
+                        results.append({"title": title, "url": url, "snippet": ""})
+            else:
+                # 解析 Lite 模式
+                links = re.findall(r'<a[^>]*href="([^"]*)"[^>]*class="result-link"[^>]*>(.*?)</a>', html, re.DOTALL)
+                snippets = re.findall(r'<td[^>]*class="result-snippet"[^>]*>(.*?)</td>', html, re.DOTALL)
+                for i in range(min(len(links), max_results)):
+                    url = links[i][0]
+                    title = re.sub(r'<[^>]+>', '', links[i][1]).strip()
+                    snippet = re.sub(r'<[^>]+>', '', snippets[i]).strip() if i < len(snippets) else ""
+                    if url and not url.startswith("http"):
+                        url = "https://" + url
+                    results.append({"title": title, "url": url, "snippet": snippet})
+
+            if results:
+                break
+        except Exception as e:
+            print(f"⚠️ 搜索尝试 {attempt+1} 失败: {e}")
+            continue
 
     return results
 
@@ -256,7 +286,8 @@ def chat_stream(messages, search_enabled=True):
 
     # 检查最后一条消息是否需要联网搜索
     last_msg = messages[-1]["content"] if messages else ""
-    should_search = search_enabled and ("搜索" in last_msg[:50] or "查一下" in last_msg[:50] or "联网" in last_msg[:50] or "最新" in last_msg[:50] or "今天" in last_msg[:50])
+    search_keywords = ["搜索", "查一下", "联网", "最新", "今天", "行情", "新闻", "股票", "基金", "涨", "跌"]
+    should_search = search_enabled and any(kw in last_msg for kw in search_keywords)
 
     search_results = None
     if should_search:
