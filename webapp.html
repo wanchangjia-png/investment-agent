@@ -1445,7 +1445,7 @@ function showStockDetail(name) {
     if (!s) return;
 
     document.getElementById("stockDetailName").textContent = s.name;
-    const sectorMap = {"科达利":"新能源车","三花智控":"新能源车","拓普集团":"新能源车","天齐锂业":"新能源车","立讯精密":"消费电子","五粮液":"白酒","元隆雅图":"文化传媒"};
+    const sectorMap = {"科达利":"新能源车","三花智控":"新能源车","拓普集团":"新能源车","天齐锂业":"新能源车","立讯精密":"消费电子","五粮液":"白酒","元隆雅图":"文化传媒","半导体ETF":"半导体","芯片ETF":"半导体","半导体芯片ETF":"半导体"};
     const sector = sectorMap[name] || "其他";
     const needRise = s.pnl < 0 ? ((s.cost - s.price) / s.price * 100).toFixed(1) : '0';
     const pnlColor = s.pnl>=0?'#CC0000':'#009900';
@@ -1958,6 +1958,9 @@ const STOCK_CODES = {
     "五粮液": "000858",
     "天齐锂业": "002466",
     "元隆雅图": "002878",
+    "半导体ETF": "512480",
+    "芯片ETF": "512760",
+    "半导体芯片ETF": "159995",
 };
 
 // ============ 工具 ============
