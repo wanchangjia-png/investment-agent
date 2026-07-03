@@ -772,6 +772,13 @@ class PortfolioHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
+        elif self.path == "/api/edit-history":
+            try:
+                logs = agent.load_edit_log()
+                self._send_json({"logs": logs})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
         else:
             self._send_json({"error": "not found"}, 404)
 
@@ -842,13 +849,6 @@ class PortfolioHandler(BaseHTTPRequestHandler):
             try:
                 result = api_add_position_advice(data)
                 self._send_json(result)
-            except Exception as e:
-                self._send_json({"error": str(e)}, 500)
-
-        elif self.path == "/api/edit-history":
-            try:
-                logs = agent.load_edit_log()
-                self._send_json({"logs": logs})
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
