@@ -466,11 +466,12 @@ def api_refresh():
     total_value, total_pnl, accounts = agent.calculate(holdings)
     detail = {k: v["市值"] for k, v in accounts.items()}
     snapshot_recorded = agent.save_networth_snapshot(total_value, total_pnl, detail)
-    if snapshot_recorded:
-        try:
-            agent.sync_portfolio_to_github()
-        except Exception:
-            pass
+
+    # 每次刷新都同步 Excel 到 GitHub，防止部署丢数据
+    try:
+        agent.sync_portfolio_to_github()
+    except Exception:
+        pass
     # 更新 HTML 看板
     try:
         from report_generator import generate as gen_html
@@ -938,5 +939,31 @@ def main():
         server.server_close()
 
 
+def _pull_latest_from_github():
+    """启动时从 GitHub 拉取最新的 portfolio.xlsx，防止部署导致数据丢失"""
+    import urllib.request
+    token = os.environ.get("GH_TOKEN")
+    if not token:
+        return
+    repo = "wanchangjia-png/investment-agent"
+    url = f"https://api.github.com/repos/{repo}/contents/portfolio.xlsx"
+    try:
+        req = urllib.request.Request(url, headers={
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "investment-agent",
+            "Accept": "application/vnd.github.v3+json",
+        })
+        resp = urllib.request.urlopen(req, timeout=15)
+        import json, base64
+        data = json.loads(resp.read().decode("utf-8"))
+        content = base64.b64decode(data["content"])
+        with open(agent.EXCEL_PATH, "wb") as f:
+            f.write(content)
+        print("📥 已从 GitHub 拉取最新 portfolio.xlsx")
+    except Exception as e:
+        print(f"⚠️ 从 GitHub 拉取失败（首次部署或 token 问题）: {e}")
+
+
 if __name__ == "__main__":
+    _pull_latest_from_github()
     main()
