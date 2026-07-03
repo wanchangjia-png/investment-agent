@@ -270,6 +270,40 @@ def save_prices(holdings):
     wb.close()
 
 
+def _backup_holdings_as_yesterday(wb):
+    """将当前持仓复制到"昨日持仓"sheet，供次日计算今日盈亏用"""
+    if "昨日持仓" not in wb.sheetnames:
+        ws = wb.create_sheet("昨日持仓")
+        ws.append(["资产类别", "账户", "资产名称", "代码", "持股数/份额", "成本价"])
+    else:
+        # 清空旧数据
+        ws = wb["昨日持仓"]
+        ws.delete_rows(2, ws.max_row)
+    src = wb["持仓表"]
+    for row in src.iter_rows(min_row=2, values_only=True):
+        if row[0] is None or (isinstance(row[0], str) and row[0] == "合计"):
+            break
+        ws.append([row[0], row[1], row[2], row[3], row[4], row[5]])
+
+
+def load_yesterday_qty_map():
+    """加载昨日持仓数量（名称 → 持股数），用于计算今日盈亏"""
+    try:
+        wb = openpyxl.load_workbook(EXCEL_PATH)
+        if "昨日持仓" not in wb.sheetnames:
+            wb.close()
+            return {}
+        ws = wb["昨日持仓"]
+        yesterday = {}
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[2] and row[4] is not None:
+                yesterday[str(row[2])] = float(row[4]) if not isinstance(row[4], (int, float)) else row[4]
+        wb.close()
+        return yesterday
+    except Exception:
+        return {}
+
+
 def save_networth_snapshot(total, pnl, detail):
     """保存净值快照到净值历史表（只在15:00收盘后记录，一天一次）
     返回 True=已记录, False=跳过"""
@@ -323,6 +357,8 @@ def save_networth_snapshot(total, pnl, detail):
     ws.cell(row=last_row, column=6, value=daily_pnl)
     ws.cell(row=last_row, column=7, value=pnl)
     ws.cell(row=last_row, column=8, value="收盘记录")
+    # 备份持仓作为"昨日持仓"，供次日计算今日盈亏
+    _backup_holdings_as_yesterday(wb)
     wb.save(EXCEL_PATH)
     print(f"📝 已记录净值快照: {today}  总资产 {total:,.0f} 元")
     wb.close()

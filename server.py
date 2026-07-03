@@ -377,6 +377,7 @@ def api_data():
     total_value, total_pnl, accounts = agent.calculate(holdings)
     history = agent.load_history()
     prev_closes = _fetch_prev_closes()
+    yesterday_qty = agent.load_yesterday_qty_map()  # 名称 → 昨日持股数
 
     stocks = []
     for h in holdings:
@@ -386,7 +387,13 @@ def api_data():
                 continue  # 已清仓的不显示在持仓中
             price = h["现价"] or 0
             prev_close = prev_closes.get(h["名称"], 0)
-            today_pnl = round((price - prev_close) * qty, 2) if prev_close > 0 and qty > 0 else 0
+            # 今日新增的股票（昨日持股数=0），用成本价代替昨收价计算今日收益
+            yesterday_q = yesterday_qty.get(h["名称"], None)
+            is_new_today = yesterday_q is not None and yesterday_q == 0
+            if is_new_today:
+                today_pnl = round((price - h["成本价"]) * qty, 2) if qty > 0 else 0
+            else:
+                today_pnl = round((price - prev_close) * qty, 2) if prev_close > 0 and qty > 0 else 0
             stocks.append({
                 "name": h["名称"],
                 "account": h["账户"],
