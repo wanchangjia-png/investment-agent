@@ -183,17 +183,37 @@ tr:hover { background: #f8f9ff; }
 .be-scenarios .scenario .val { font-weight:600; font-size:13px; }
 .be-already { background:#e8f5e9; color:#2e7d32; padding:6px 12px; border-radius:6px; font-size:13px; text-align:center; }
 
-/* 小眼睛 — 隐藏金额 */
-.eye-closed .value,
-.eye-closed .num,
-.eye-closed .val,
-.eye-closed .be-bar-text,
-.eye-closed .be-progress-text,
-.eye-closed #stockDetailBody div[style*="font-size"],
-.eye-closed .detail-item b {
-    filter: blur(8px);
-    transition: filter 0.2s;
-    user-select: none;
+/* 小眼睛 — 隐藏金额（只作用于顶部 KPI 卡片） */
+.eye-closed .kpi-card .value,
+.eye-closed .kpi-card .sub {
+    font-size: 0 !important;
+    position: relative;
+    color: transparent !important;
+}
+.eye-closed .kpi-card .value::after {
+    content: "****";
+    font-size: 22px;
+    font-weight: 700;
+    color: #1a1a2e;
+    letter-spacing: 2px;
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    top: 0;
+}
+.eye-closed .kpi-card .sub::after {
+    content: "****";
+    font-size: 12px;
+    color: #888;
+    letter-spacing: 1px;
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    top: 0;
+}
+/* 第二行 KPI 卡片数字小一号 */
+.eye-closed .kpi-row + .kpi-row .kpi-card .value::after {
+    font-size: 18px;
 }
 </style>
 </head>
