@@ -1101,16 +1101,7 @@ def risk_analysis(holdings):
             "建议": "建议至少保留总资产 10% 的现金作为应急储备",
         })
 
-    # 5. 无固收类资产
-    has_bond = any(h["类别"] in ("债基", "固收", "理财") for h in holdings)
-    if not has_bond:
-        risks.append({
-            "级别": "🟡 中风险",
-            "问题": "缺少固收/债券类资产，组合波动率偏高",
-            "建议": "建议配置 15-20% 短债基金或银行理财作为压舱石",
-        })
-
-    # 6. 短线账户亏损率
+    # 5. 短线账户亏损率
     for acct, data in sorted(accounts.items()):
         if "短线" in acct:
             cost = data["市值"] - data["盈亏"]
@@ -1290,8 +1281,8 @@ def generate_advice(holdings, risks):
         advice += "\n"
     advice += "  ▌资产再平衡\n"
     advice += f"    当前: 股票 {by_type.get('股票',0)/total_value*100:.0f}% | 黄金 {by_type.get('黄金',0)/total_value*100:.0f}% | 现金 {by_type.get('现金',0)/total_value*100:.0f}%\n"
-    advice += "    目标: 股票 55-60% | 黄金 10-15% | 固收 15-20% | 现金 10%\n"
-    advice += "    → 中期应逐步加入债基/理财作为压舱石\n\n"
+    advice += "    目标: 股票 65-75% | 黄金 10-15% | 现金 15-20%\n"
+    advice += "    → 理财另计，本账户专注中高风险投资\n\n"
 
     # 黄金
     gold_value = by_type.get("黄金", 0)
@@ -1317,9 +1308,7 @@ def generate_advice(holdings, risks):
     advice += "    ├────────────────────────────────────────────┤\n"
     advice += "    │  黄金                     10-15%   2.5-3.5万│\n"
     advice += "    ├────────────────────────────────────────────┤\n"
-    advice += "    │  债基/银行理财            15-20%   3.5-5万 │\n"
-    advice += "    ├────────────────────────────────────────────┤\n"
-    advice += "    │  现金                     10%     2-2.5万  │\n"
+    advice += "    │  现金                     15-20%   3-5万    │\n"
     advice += "    └────────────────────────────────────────────┘\n\n"
 
     advice += "  ▌风险底线\n"
