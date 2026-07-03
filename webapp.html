@@ -185,24 +185,22 @@ tr:hover { background: #f8f9ff; }
 
 /* 小眼睛 — 隐藏金额（只作用于顶部 KPI 卡片的大数字） */
 .eye-closed .kpi-card .value {
-    font-size: 0 !important;
+    visibility: hidden;
     position: relative;
-    color: transparent !important;
 }
 .eye-closed .kpi-card .value::after {
+    visibility: visible;
     content: "****";
-    font-size: 22px;
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    text-align: center;
     font-weight: 700;
     color: #1a1a2e;
-    letter-spacing: 2px;
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
-    top: 0;
-}
-/* 第二行 KPI 卡片数字小一号 */
-.eye-closed .kpi-row + .kpi-row .kpi-card .value::after {
-    font-size: 18px;
+    letter-spacing: 3px;
+    /* font-size 继承自原始 .value */
 }
 </style>
 </head>
