@@ -798,6 +798,13 @@ function renderHistory(history) {
         const startOffset = firstDay === 0 ? 6 : firstDay - 1;
         const daysInMonth = new Date(+y, +m, 0).getDate();
 
+        // 计算月盈亏合计
+        let monthPnl = 0;
+        for (const dayNum of Object.keys(days)) {
+            const r = days[dayNum];
+            if (r && r.daily) monthPnl += r.daily;
+        }
+
         html += `<div style="margin-bottom:18px;">
             <div style="font-weight:600;font-size:15px;color:#2F5496;margin-bottom:8px;">${monthLabel}</div>
             <table style="font-size:11px;width:100%;table-layout:fixed;border-collapse:separate;border-spacing:3px;">
@@ -833,7 +840,12 @@ function renderHistory(history) {
             }
             html += "</tr>";
         }
-        html += "</tbody></table></div>";
+        html += `</tbody></table>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 12px;background:#f8f9ff;border-radius:8px;font-size:13px;margin-top:4px;">
+                <span style="color:#888;">月盈亏合计</span>
+                <span style="font-weight:700;color:${monthPnl>=0?'#CC0000':'#009900'};">${monthPnl>=0?'+':''}${monthPnl.toLocaleString()}</span>
+            </div>
+        </div>`;
     }
     container.innerHTML = html;
 }
