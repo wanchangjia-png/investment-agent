@@ -182,6 +182,19 @@ tr:hover { background: #f8f9ff; }
 .be-scenarios .scenario .lbl { color:#999; font-size:10px; }
 .be-scenarios .scenario .val { font-weight:600; font-size:13px; }
 .be-already { background:#e8f5e9; color:#2e7d32; padding:6px 12px; border-radius:6px; font-size:13px; text-align:center; }
+
+/* 小眼睛 — 隐藏金额 */
+.eye-closed .value,
+.eye-closed .num,
+.eye-closed .val,
+.eye-closed .be-bar-text,
+.eye-closed .be-progress-text,
+.eye-closed #stockDetailBody div[style*="font-size"],
+.eye-closed .detail-item b {
+    filter: blur(8px);
+    transition: filter 0.2s;
+    user-select: none;
+}
 </style>
 </head>
 <body>
@@ -192,6 +205,7 @@ tr:hover { background: #f8f9ff; }
     <h1 onclick="switchLayout('split')" title="点击切换布局">📈 给老子涨</h1>
     <div style="display:flex;align-items:center;gap:12px;">
         <span class="status-bar" id="statusBar">就绪</span>
+        <button class="btn btn-sm btn-outline" id="eyeToggle" onclick="toggleEye()" title="隐藏/显示金额">👁️</button>
         <button class="btn btn-sm btn-outline" onclick="showSettings()">⚙️</button>
         <button class="btn btn-sm btn-outline" onclick="showEditHoldings()">📝 编辑持仓</button>
         <button class="btn btn-sm btn-outline" onclick="showCapitalFlowPwd()">💰 出入金</button>
@@ -559,6 +573,25 @@ async function loadData() {
         render();
     } catch (e) { document.getElementById("statusBar").textContent = "⚠️ 连接失败"; }
 }
+
+// ============ 小眼睛 隐藏/显示金额 ============
+function toggleEye() {
+    const c = document.querySelector(".container");
+    const btn = document.getElementById("eyeToggle");
+    const hidden = c.classList.toggle("eye-closed");
+    btn.textContent = hidden ? "🔒" : "👁️";
+    btn.title = hidden ? "显示金额" : "隐藏金额";
+    try { localStorage.setItem("eye_hidden", hidden ? "1" : "0"); } catch(e) {}
+}
+
+// 页面加载时恢复上次状态
+try {
+    if (localStorage.getItem("eye_hidden") === "1") {
+        document.querySelector(".container").classList.add("eye-closed");
+        document.getElementById("eyeToggle").textContent = "🔒";
+        document.getElementById("eyeToggle").title = "显示金额";
+    }
+} catch(e) {}
 
 async function refreshData() {
     const btn = document.getElementById("refreshBtn");
