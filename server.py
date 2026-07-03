@@ -175,6 +175,42 @@ def _build_system_prompt():
         for r in risks[:5]:
             prompt += f"- [{r['级别']}] {r['问题']}\n"
 
+    # 近期操作记录
+    try:
+        edits = agent.load_edit_log()
+        if edits:
+            prompt += "\n### 近期操作记录：\n"
+            for e in edits[-8:]:
+                prompt += f"- {e['time']}：{e['detail']}\n"
+    except Exception:
+        pass
+
+    # 近期出入金
+    try:
+        flows = agent.load_capital_flows()
+        if flows:
+            recent = flows[-5:] if len(flows) > 5 else flows
+            prompt += "\n### 近期出入金：\n"
+            for f in recent:
+                sign = "+" if f["type"] == "存入" else "-"
+                note = f"（{f['note']}）" if f.get("note") else ""
+                prompt += f"- {f['date']} {f['type']} {sign}{f['amount']:,.0f}元{note}\n"
+    except Exception:
+        pass
+
+    # 净值趋势（最近几天）
+    try:
+        history = agent.load_history()
+        if history:
+            recent_h = history[-5:] if len(history) > 5 else history
+            prompt += "\n### 近期净值变化：\n"
+            for h in recent_h:
+                daily = h.get("当日盈亏", 0) or 0
+                sign = "+" if daily >= 0 else ""
+                prompt += f"- {h['日期']}：总资产 {h['总资产']:,.0f}元，当日盈亏 {sign}{daily:,.0f}元\n"
+    except Exception:
+        pass
+
     prompt += """
 
 ## 重要规则（必须遵守）
@@ -182,6 +218,7 @@ def _build_system_prompt():
 2. **仓位百分比以总资产为分母**（不是以股票市值作分母），单票占总资产不超过 25%
 3. **给出具体数字**：建议操作时，明确说"卖 X 手（XX 股）"而不是"减仓一部分"
 4. **现金为王**：至少保留总资产 10% 的现金
+5. **参考操作记录**：回答时可参考用户的近期买卖、出入金操作，分析其操作效果并给出判断
 
 ## 回答风格
 - 短期建议：具体操作层面（减仓、加仓、止损线）
