@@ -184,11 +184,13 @@ tr:hover { background: #f8f9ff; }
 .be-already { background:#e8f5e9; color:#2e7d32; padding:6px 12px; border-radius:6px; font-size:13px; text-align:center; }
 
 /* 小眼睛 — 隐藏金额（只作用于顶部 KPI 卡片的大数字） */
-.eye-closed .kpi-card .value {
+.eye-closed #kpiRow .kpi-card .value,
+.eye-closed #kpiRow2 .kpi-card .value {
     visibility: hidden;
     position: relative;
 }
-.eye-closed .kpi-card .value::after {
+.eye-closed #kpiRow .kpi-card .value::after,
+.eye-closed #kpiRow2 .kpi-card .value::after {
     visibility: visible;
     content: "****";
     display: block;
