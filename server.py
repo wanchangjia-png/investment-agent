@@ -9,6 +9,8 @@ import json
 import os
 import sys
 import re
+import time
+import threading
 import urllib.request
 import urllib.parse
 from datetime import datetime
@@ -345,14 +347,36 @@ def chat_stream(messages, search_enabled=True):
     search_results = None
     if should_search:
         yield json.dumps({"type": "search_status", "content": "🔍 正在联网搜索..."}, ensure_ascii=False)
-        search_results = web_search(last_msg)
+
+        # 异步搜索：后台线程 + 心跳保活，防止 Railway 超时断开 SSE
+        result_box = []
+        def _do_search():
+            result_box.append(web_search(last_msg))
+        t = threading.Thread(target=_do_search, daemon=True)
+        t.start()
+
+        phases = ["⏳ 搜索中", "⏳ 搜索中.", "⏳ 搜索中..", "⏳ 搜索中..."]
+        idx = 0
+        max_wait = 35
+        start = time.time()
+        while t.is_alive():
+            if time.time() - start > max_wait:
+                break
+            t.join(timeout=2.5)
+            idx = (idx + 1) % len(phases)
+            yield json.dumps({"type": "search_heartbeat", "content": phases[idx]}, ensure_ascii=False)
+
+        if result_box:
+            search_results = result_box[0]
+
         if search_results:
             context = "\n\n### 联网搜索结果：\n"
             for i, r in enumerate(search_results, 1):
                 context += f"{i}. [{r['title']}]({r['url']})\n   {r['snippet']}\n"
-            # 追加到 system prompt
             full_messages[0]["content"] += context
             yield json.dumps({"type": "search_status", "content": f"✅ 搜索到 {len(search_results)} 条结果，正在分析..."}, ensure_ascii=False)
+        else:
+            yield json.dumps({"type": "search_status", "content": "⚠️ 搜索结果为空，直接分析"}, ensure_ascii=False)
 
     full_messages.extend(messages)
 
