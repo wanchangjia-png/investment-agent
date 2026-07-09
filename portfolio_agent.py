@@ -601,23 +601,27 @@ def get_cleared_positions():
         wb = openpyxl.load_workbook(EXCEL_PATH)
         ws = wb["持仓表"]
         cleared = []
+        cleared_names = set()
         for row in ws.iter_rows(min_row=2, values_only=True):
             if row[0] is None or (isinstance(row[0], str) and row[0] == "合计"):
                 break
             if row[0] == "股票" and (row[4] is None or row[4] == 0):
+                name = str(row[2]) if row[2] else ""
                 cleared.append({
-                    "name": str(row[2]) if row[2] else "",
+                    "name": name,
                     "account": str(row[1]) if row[1] else "",
                     "code": str(row[3]) if row[3] else "",
                     "cost": float(row[5]) if row[5] else 0,
                     "last_price": float(row[6]) if row[6] else 0,
                 })
+                if name:
+                    cleared_names.add(name)
         wb.close()
 
         # 匹配已实现盈亏
         realized_records = get_realized_pnl_records()
-        pnl_map = {}  # name → total realized pnl
-        date_map = {}  # name → latest clearing date
+        pnl_map = {}
+        date_map = {}
         for r in realized_records:
             name = r["name"]
             pnl_map[name] = pnl_map.get(name, 0) + r["pnl"]
@@ -627,6 +631,21 @@ def get_cleared_positions():
         for c in cleared:
             c["realized_pnl"] = round(pnl_map.get(c["name"], 0), 2)
             c["clear_date"] = date_map.get(c["name"], "")
+
+        # 补充：只在已实现盈亏有记录、但持仓表已无对应行的股票
+        for r in realized_records:
+            name = r["name"]
+            if name and name not in cleared_names:
+                cleared.append({
+                    "name": name,
+                    "account": "",
+                    "code": "",
+                    "cost": 0,
+                    "last_price": 0,
+                    "realized_pnl": round(pnl_map.get(name, 0), 2),
+                    "clear_date": date_map.get(name, ""),
+                })
+                cleared_names.add(name)
 
         return cleared
     except Exception as e:
