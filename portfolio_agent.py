@@ -622,11 +622,13 @@ def get_cleared_positions():
         realized_records = get_realized_pnl_records()
         pnl_map = {}
         date_map = {}
+        last_record_map = {}  # name → 最近一条记录的卖出价和成本价
         for r in realized_records:
             name = r["name"]
             pnl_map[name] = pnl_map.get(name, 0) + r["pnl"]
             if name not in date_map or r["date"] > date_map[name]:
                 date_map[name] = r["date"].split()[0] if " " in r["date"] else r["date"]
+                last_record_map[name] = {"price": r["price"], "cost": r["cost"]}
 
         for c in cleared:
             c["realized_pnl"] = round(pnl_map.get(c["name"], 0), 2)
@@ -636,12 +638,13 @@ def get_cleared_positions():
         for r in realized_records:
             name = r["name"]
             if name and name not in cleared_names:
+                info = last_record_map.get(name, {})
                 cleared.append({
                     "name": name,
                     "account": "",
                     "code": "",
-                    "cost": 0,
-                    "last_price": 0,
+                    "cost": info.get("cost", 0),
+                    "last_price": info.get("price", 0),
                     "realized_pnl": round(pnl_map.get(name, 0), 2),
                     "clear_date": date_map.get(name, ""),
                 })
