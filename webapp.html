@@ -475,8 +475,10 @@ tr:hover { background: #f8f9ff; }
             <input type="text" id="cfNote" placeholder="如：外部资金购入黄金" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;">
         </div>
         <div class="modal-actions">
+            <span id="cfEditHint" style="font-size:12px;color:#888;display:none;">✏️ 编辑模式</span>
             <button class="btn btn-outline" onclick="hideCapitalFlow()">取消</button>
-            <button class="btn btn-primary" onclick="saveCapitalFlow()">保存</button>
+            <button class="btn btn-outline" id="cfCancelEdit" style="display:none;" onclick="cancelEditCapitalFlow()">取消编辑</button>
+            <button class="btn btn-primary" id="cfSaveBtn" onclick="saveCapitalFlow()">保存</button>
         </div>
         <div style="margin-top:14px;padding-top:12px;border-top:1px solid #eee;max-height:200px;overflow-y:auto;" id="cfHistory"></div>
     </div>
@@ -547,6 +549,8 @@ let chartPie = null, chartLine = null;
 let isStreaming = false;
 let pwdPendingAction = null;
 let rpEditingRow = null;
+let cfEditingRow = null;
+let cfFlows = [];
 
 // ============ 排序状态 ============
 let sortColumn = null;
@@ -1283,15 +1287,36 @@ function showCapitalFlowPwd() {
     setTimeout(() => document.getElementById("pwdInput").focus(), 100);
 }
 
-function showCapitalFlow() {
+function showCapitalFlow(editData) {
     document.getElementById("capitalFlowModal").classList.add("show");
-    document.getElementById("cfAmount").value = "";
-    document.getElementById("cfNote").value = "";
+    document.getElementById("cfEditHint").style.display = editData ? "inline" : "none";
+    document.getElementById("cfCancelEdit").style.display = editData ? "inline" : "none";
+    if (editData) {
+        cfEditingRow = editData.row;
+        document.getElementById("cfType").value = editData.type || "存入";
+        document.getElementById("cfAmount").value = editData.amount || "";
+        document.getElementById("cfNote").value = editData.note || "";
+    } else {
+        cfEditingRow = null;
+        document.getElementById("cfType").value = "存入";
+        document.getElementById("cfAmount").value = "";
+        document.getElementById("cfNote").value = "";
+    }
     loadCapitalFlowHistory();
 }
 
 function hideCapitalFlow() {
     document.getElementById("capitalFlowModal").classList.remove("show");
+    cfEditingRow = null;
+}
+
+function cancelEditCapitalFlow() {
+    cfEditingRow = null;
+    document.getElementById("cfEditHint").style.display = "none";
+    document.getElementById("cfCancelEdit").style.display = "none";
+    document.getElementById("cfType").value = "存入";
+    document.getElementById("cfAmount").value = "";
+    document.getElementById("cfNote").value = "";
 }
 
 async function saveCapitalFlow() {
@@ -1300,14 +1325,20 @@ async function saveCapitalFlow() {
     const note = document.getElementById("cfNote").value.trim();
     if (!amount || amount <= 0) { alert("请输入有效金额"); return; }
     try {
+        const body = cfEditingRow
+            ? { action: "update", row: cfEditingRow, amount, type, note }
+            : { amount, type, note };
         const res = await fetch("/api/capital-flow", {
             method: "POST",
             headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({ amount, type, note })
+            body: JSON.stringify(body)
         });
         const data = await res.json();
         if (data.success) {
-            hideCapitalFlow();
+            cfEditingRow = null;
+            document.getElementById("cfEditHint").style.display = "none";
+            document.getElementById("cfCancelEdit").style.display = "none";
+            loadCapitalFlowHistory();
             refreshData();
         } else {
             alert("保存失败: " + (data.error || ""));
@@ -1317,17 +1348,56 @@ async function saveCapitalFlow() {
     }
 }
 
+function editCapitalFlow(row) {
+    const f = cfFlows.find(x => x.row === row);
+    if (f) showCapitalFlow(f);
+}
+
+async function deleteCapitalFlow(row) {
+    if (!confirm("确定要删除这条出入金记录吗？")) return;
+    try {
+        const res = await fetch("/api/capital-flow", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ action: "delete", row })
+        });
+        const data = await res.json();
+        if (data.success) {
+            if (cfEditingRow === row) {
+                cfEditingRow = null;
+                document.getElementById("cfEditHint").style.display = "none";
+                document.getElementById("cfCancelEdit").style.display = "none";
+            }
+            loadCapitalFlowHistory();
+            refreshData();
+        } else {
+            alert("删除失败: " + (data.error || ""));
+        }
+    } catch(e) {
+        alert("删除失败: " + e.message);
+    }
+}
+
 async function loadCapitalFlowHistory() {
     const container = document.getElementById("cfHistory");
     try {
         const res = await fetch("/api/capital-flows");
         const data = await res.json();
         const flows = data.flows || [];
+        cfFlows = flows;
         if (flows.length === 0) {
             container.innerHTML = '<div style="text-align:center;color:#ccc;font-size:12px;padding:10px;">暂无记录</div>';
             return;
         }
-        container.innerHTML = `<table style="font-size:12px;width:100%;"><thead><tr><th>日期</th><th>类型</th><th class="num">金额</th><th>备注</th></tr></thead><tbody>${flows.map(f => `<tr><td style="font-size:11px;color:#888;">${f.date}</td><td>${f.type}</td><td class="num" style="color:${f.type==='存入'?'#CC0000':'#009900'}">${f.type==='存入'?'+':'-'}${f.amount.toLocaleString()}</td><td style="font-size:11px;color:#888;">${escapeHtml(f.note)}</td></tr>`).join("")}</tbody></table>`;
+        container.innerHTML = `<table style="font-size:12px;width:100%;"><thead><tr><th>日期</th><th>类型</th><th class="num">金额</th><th>备注</th><th style="width:55px;">操作</th></tr></thead><tbody>${flows.map(f => {
+            const sign = f.type === '存入' ? '+' : '-';
+            const color = f.type === '存入' ? '#CC0000' : '#009900';
+            return `<tr><td style="font-size:11px;color:#888;white-space:nowrap;">${f.date}</td><td>${f.type}</td><td class="num" style="color:${color}">${sign}${f.amount.toLocaleString()}</td><td style="font-size:11px;color:#888;max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(f.note)}</td>
+                <td style="white-space:nowrap;">
+                    <button class="btn btn-sm" style="background:none;color:#2F5496;border:none;cursor:pointer;font-size:11px;padding:2px 4px;" onclick="editCapitalFlow(${f.row})">✏️</button>
+                    <button class="btn btn-sm" style="background:none;color:#CC0000;border:none;cursor:pointer;font-size:11px;padding:2px 4px;" onclick="deleteCapitalFlow(${f.row})">🗑️</button>
+                </td></tr>`;
+        }).join("")}</tbody></table>`;
     } catch(e) {
         container.innerHTML = '<div style="text-align:center;color:#CC0000;font-size:12px;">加载失败</div>';
     }

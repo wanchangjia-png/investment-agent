@@ -692,10 +692,12 @@ def load_capital_flows():
             return []
         ws = wb["出入金"]
         flows = []
-        for row in ws.iter_rows(min_row=2, values_only=True):
+        for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True)):
             if row[0] is None:
                 continue
+            excel_row = i + 2  # Excel行号（+2因为从第2行开始，0-indexed的i+2）
             flows.append({
+                "row": excel_row,
                 "date": str(row[0]),
                 "type": str(row[1]) if row[1] else "",
                 "amount": float(row[2]) if row[2] else 0,
@@ -707,6 +709,42 @@ def load_capital_flows():
         return flows
     except Exception:
         return []
+
+
+def update_capital_flow(row, amount, flow_type, note=""):
+    """修改指定行号的出入金记录"""
+    try:
+        wb = openpyxl.load_workbook(EXCEL_PATH)
+        if "出入金" not in wb.sheetnames:
+            wb.close()
+            return False
+        ws = wb["出入金"]
+        ws.cell(row=row, column=2, value=flow_type)
+        ws.cell(row=row, column=3, value=amount)
+        ws.cell(row=row, column=4, value=note)
+        wb.save(EXCEL_PATH)
+        wb.close()
+        return True
+    except Exception as e:
+        print(f"⚠️ 更新出入金记录失败: {e}")
+        return False
+
+
+def delete_capital_flow(row):
+    """删除指定行号的出入金记录"""
+    try:
+        wb = openpyxl.load_workbook(EXCEL_PATH)
+        if "出入金" not in wb.sheetnames:
+            wb.close()
+            return False
+        ws = wb["出入金"]
+        ws.delete_rows(row)
+        wb.save(EXCEL_PATH)
+        wb.close()
+        return True
+    except Exception as e:
+        print(f"⚠️ 删除出入金记录失败: {e}")
+        return False
 
 
 def get_net_capital():

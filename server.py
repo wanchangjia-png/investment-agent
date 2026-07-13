@@ -959,15 +959,41 @@ class PortfolioHandler(BaseHTTPRequestHandler):
 
         elif self.path == "/api/capital-flow":
             try:
-                amount = float(data.get("amount", 0))
-                flow_type = data.get("type", "存入")
-                note = data.get("note", "")
-                if amount <= 0:
-                    self._send_json({"success": False, "error": "金额必须大于0"})
-                    return
-                ok = agent.add_capital_flow(amount, flow_type, note)
-                agent.sync_portfolio_to_github()
-                self._send_json({"success": ok})
+                action = data.get("action", "create")
+                if action == "update":
+                    row = data.get("row")
+                    amount = float(data.get("amount", 0))
+                    flow_type = data.get("type", "存入")
+                    note = data.get("note", "")
+                    if not row:
+                        self._send_json({"success": False, "error": "缺少行号"})
+                        return
+                    if amount <= 0:
+                        self._send_json({"success": False, "error": "金额必须大于0"})
+                        return
+                    ok = agent.update_capital_flow(int(row), amount, flow_type, note)
+                    if ok:
+                        agent.sync_portfolio_to_github()
+                    self._send_json({"success": ok})
+                elif action == "delete":
+                    row = data.get("row")
+                    if not row:
+                        self._send_json({"success": False, "error": "缺少行号"})
+                        return
+                    ok = agent.delete_capital_flow(int(row))
+                    if ok:
+                        agent.sync_portfolio_to_github()
+                    self._send_json({"success": ok})
+                else:
+                    amount = float(data.get("amount", 0))
+                    flow_type = data.get("type", "存入")
+                    note = data.get("note", "")
+                    if amount <= 0:
+                        self._send_json({"success": False, "error": "金额必须大于0"})
+                        return
+                    ok = agent.add_capital_flow(amount, flow_type, note)
+                    agent.sync_portfolio_to_github()
+                    self._send_json({"success": ok})
             except Exception as e:
                 self._send_json({"success": False, "error": str(e)}, 500)
 
