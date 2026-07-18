@@ -143,12 +143,24 @@ def _build_system_prompt():
     # 股票持仓（仓位占比 = 占总资产比例）
     stock_text = "\n\n### 股票持仓：\n"
     for h in holdings:
-        if h["类别"] == "股票" and h["账户"] != "账户二（短线）":
+        if h["类别"] == "股票" and (h["数量"] or 0) > 0 and h["账户"] != "账户二（短线）":
             ret = h["收益率"] * 100 if h["收益率"] else 0
             mv = h["市值"] or 0
             alloc = total_alloc(mv)
             stock_text += f"- {h['名称']}：{h['数量']}股 @ {h['现价']:.2f}元，市值 {mv:,.0f}元，盈亏 {h['盈亏']:+,.0f}元 ({ret:+.1f}%)，占总资产 {alloc:.1f}%\n"
     prompt += stock_text
+
+    # 短线账户持仓（单独列出）
+    short_text = ""
+    for h in holdings:
+        if h["类别"] == "股票" and (h["数量"] or 0) > 0 and h["账户"] == "账户二（短线）":
+            if not short_text:
+                short_text = "\n### 短线账户持仓：\n"
+            ret = h["收益率"] * 100 if h["收益率"] else 0
+            mv = h["市值"] or 0
+            short_text += f"- {h['名称']}：{h['数量']}股 @ {h['现价']:.2f}元，市值 {mv:,.0f}元，盈亏 {h['盈亏']:+,.0f}元 ({ret:+.1f}%)\n"
+    if short_text:
+        prompt += short_text
 
     # 账户概况
     acc_text = "\n### 各账户：\n"
@@ -168,7 +180,7 @@ def _build_system_prompt():
     from collections import defaultdict
     sector_groups = defaultdict(list)
     for h2 in holdings:
-        if h2["类别"] == "股票" and h2["账户"] != "账户二（短线）" and h2["名称"] in agent.SECTOR_MAP:
+        if h2["类别"] == "股票" and (h2["数量"] or 0) > 0 and h2["名称"] in agent.SECTOR_MAP:
             sector_groups[agent.SECTOR_MAP[h2["名称"]]].append(h2)
     if sector_groups:
         prompt += "\n### 板块分布：\n"
