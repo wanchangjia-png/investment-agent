@@ -897,7 +897,8 @@ function renderCleared() {
         <div class="kpi-card" style="padding:8px 12px;"><div class="label" style="font-size:11px;">盈利/亏损</div><div class="value" style="font-size:16px;"><span style="color:#CC0000;">${profitCount}</span>/<span style="color:#009900;">${lossCount}</span></div></div>
     `;
 
-    body.innerHTML = cleared.map(c => {
+    const sorted = [...cleared].sort((a, b) => (b.clear_date || "").localeCompare(a.clear_date || ""));
+    body.innerHTML = sorted.map(c => {
         const pnl = c.realized_pnl || 0;
         return `<tr>
             <td style="font-weight:500;">${escapeHtml(c.name)}</td>
