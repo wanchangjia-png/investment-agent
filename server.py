@@ -263,11 +263,43 @@ def _build_system_prompt():
     return prompt
 
 
+def _bing_parse(html, max_results):
+    """解析 Bing 搜索结果页（li.b_algo 块）"""
+    results = []
+    blocks = re.findall(r'<li class="b_algo".*?</li>', html, re.DOTALL)
+    for block in blocks[:max_results]:
+        m = re.search(r'<a[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>', block, re.DOTALL)
+        if not m:
+            continue
+        title = re.sub(r'<[^>]+>', '', m.group(2)).strip()
+        pm = re.search(r'<p[^>]*>(.*?)</p>', block, re.DOTALL)
+        snippet = re.sub(r'<[^>]+>', '', pm.group(1)).strip() if pm else ""
+        if title:
+            results.append({"title": title, "url": m.group(1), "snippet": snippet})
+    return results
+
+
 def web_search(query, max_results=5):
-    """联网搜索，返回搜索结果列表"""
+    """联网搜索，返回搜索结果列表。优先 Bing（国内可达），DuckDuckGo 兜底。"""
+    ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
     results = []
 
-    # 用 POST 方式请求 html.duckduckgo.com（比 lite 更稳定）
+    # 1) Bing 国内可直连
+    for attempt in range(2):
+        try:
+            req = urllib.request.Request(
+                f"https://cn.bing.com/search?q={urllib.parse.quote(query)}&setlang=zh-hans",
+                headers={"User-Agent": ua},
+            )
+            resp = urllib.request.urlopen(req, timeout=8)
+            html = resp.read().decode("utf-8", errors="ignore")
+            results = _bing_parse(html, max_results)
+            if results:
+                return results
+        except Exception as e:
+            print(f"⚠️ Bing 搜索尝试 {attempt+1} 失败: {e}")
+
+    # 2) DuckDuckGo 兜底（墙外环境可用）
     for attempt in range(2):
         try:
             if attempt == 0:
@@ -275,20 +307,15 @@ def web_search(query, max_results=5):
                 req = urllib.request.Request(
                     "https://html.duckduckgo.com/html/",
                     data=data,
-                    headers={
-                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-                        "Content-Type": "application/x-www-form-urlencoded",
-                    }
+                    headers={"User-Agent": ua, "Content-Type": "application/x-www-form-urlencoded"},
                 )
             else:
-                # 备选：lite 模式
                 encoded = urllib.parse.quote(query)
                 req = urllib.request.Request(
                     f"https://lite.duckduckgo.com/lite/?q={encoded}",
-                    headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+                    headers={"User-Agent": ua},
                 )
-
-            resp = urllib.request.urlopen(req, timeout=15)
+            resp = urllib.request.urlopen(req, timeout=8)
             html = resp.read().decode("utf-8", errors="ignore")
 
             if attempt == 0:
@@ -302,16 +329,6 @@ def web_search(query, max_results=5):
                     if url and not url.startswith("http"):
                         url = "https://" + url
                     results.append({"title": title, "url": url, "snippet": snippet})
-
-                # 如果上面没解析到，试试更宽松的匹配
-                if not results:
-                    all_links = re.findall(r'<a[^>]*class="result[^"]*"[^>]*href="([^"]*)"[^>]*>(.*?)</a>', html, re.DOTALL)
-                    for i in range(min(len(all_links), max_results)):
-                        url = all_links[i][0]
-                        title = re.sub(r'<[^>]+>', '', all_links[i][1]).strip()
-                        if url and not url.startswith("http"):
-                            url = "https://" + url
-                        results.append({"title": title, "url": url, "snippet": ""})
             else:
                 # 解析 Lite 模式
                 links = re.findall(r'<a[^>]*href="([^"]*)"[^>]*class="result-link"[^>]*>(.*?)</a>', html, re.DOTALL)
@@ -327,7 +344,7 @@ def web_search(query, max_results=5):
             if results:
                 break
         except Exception as e:
-            print(f"⚠️ 搜索尝试 {attempt+1} 失败: {e}")
+            print(f"⚠️ DuckDuckGo 搜索尝试 {attempt+1} 失败: {e}")
             continue
 
     return results
