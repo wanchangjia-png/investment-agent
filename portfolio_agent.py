@@ -183,6 +183,26 @@ def save_holdings(holdings_data):
 
     wb.save(EXCEL_PATH)
     wb.close()
+
+    # 黄金卖出自动入账：数量减少 → 记录"取出"流水（备注"黄金卖出"）
+    try:
+        old_gold = {h["账户"]: h for h in old_holdings if h["类别"] == "黄金"}
+        for nh in new_holdings:
+            if nh["类别"] == "黄金":
+                oh = old_gold.get(nh["账户"])
+                old_qty = oh["数量"] or 0 if oh else 0
+                new_qty = nh["数量"] or 0
+                if old_qty > new_qty:
+                    sold_g = old_qty - new_qty
+                    # 用卖出前最后一次行情价估算（前端编辑不带现价）
+                    sell_price = (oh["现价"] or nh["成本价"] or 0) if oh else (nh["成本价"] or 0)
+                    amount = round(sold_g * sell_price, 2)
+                    if amount > 0:
+                        add_capital_flow(amount, "取出", "黄金卖出")
+                        print(f"💰 黄金自动入账：卖出 {sold_g}g × {sell_price} = {amount}元")
+    except Exception as e:
+        print(f"⚠️ 黄金自动入账失败: {e}")
+
     return load_portfolio()
 
 
@@ -497,6 +517,18 @@ def record_realized_pnl(name, qty=0, price=0, cost=0, action="清仓", amount=No
         print(f"📝 已记录已实现盈亏: {name} {action} {qty}股, 盈亏 {pnl:+,.0f}元")
     except Exception as e:
         print(f"⚠️ 记录已实现盈亏失败: {e}")
+
+
+def get_gold_sold_total():
+    """累计黄金已卖出变现金额（出入金表中备注为"黄金卖出"的取出记录之和）"""
+    total = 0
+    try:
+        for f in load_capital_flows():
+            if f["type"] == "取出" and "黄金卖出" in f["note"]:
+                total += f["amount"]
+    except Exception:
+        pass
+    return round(total, 2)
 
 
 def get_realized_pnl_total():

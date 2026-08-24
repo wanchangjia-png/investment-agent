@@ -239,7 +239,7 @@ tr:hover { background: #f8f9ff; }
         </div>
         <div class="kpi-row" id="kpiRow2" style="grid-template-columns:repeat(5,1fr);margin-top:0;">
             <div class="kpi-card"><div class="label">A股主账户</div><div class="value" id="kpiAcct1" style="font-size:18px;">--</div><div class="sub" id="kpiAcct1Pnl">--</div></div>
-            <div class="kpi-card"><div class="label">黄金</div><div class="value" id="kpiGold" style="color:#FFC000;font-size:18px;">--</div><div class="sub" id="kpiGoldPnl">--</div></div>
+            <div class="kpi-card"><div class="label">黄金</div><div class="value" id="kpiGold" style="color:#FFC000;font-size:18px;">--</div><div class="sub" id="kpiGoldPnl">--</div><div class="sub" id="kpiGoldSold" style="font-size:11px;color:#999;">已卖出变现 --</div></div>
             <div class="kpi-card"><div class="label">账户二（短线）</div><div class="value" id="kpiAcct2" style="font-size:18px;">--</div><div class="sub" id="kpiAcct2Pnl">--</div></div>
             <div class="kpi-card"><div class="label">现金</div><div class="value" id="kpiCash" style="color:#2F5496;font-size:18px;">--</div><div class="sub">可用资金</div></div>
             <div class="kpi-card"><div class="label">清仓盈亏</div><div class="value" id="kpiRealized">--</div><div class="sub">已实现盈亏</div></div>
@@ -690,6 +690,11 @@ function render() {
         const goldPnlEl = document.getElementById("kpiGoldPnl");
         goldPnlEl.textContent = (goldAcct.pnl >= 0 ? "+" : "") + goldAcct.pnl.toLocaleString();
         goldPnlEl.style.color = goldAcct.pnl >= 0 ? "#CC0000" : "#009900";
+    }
+    // 黄金累计已卖出变现
+    const goldSoldEl = document.getElementById("kpiGoldSold");
+    if (goldSoldEl && d.gold_sold_total !== undefined) {
+        goldSoldEl.textContent = "已卖出变现 " + d.gold_sold_total.toLocaleString() + " 元";
     }
     // 现金
     const cashVal = (d.allocation && d.allocation["现金"]) || 0;

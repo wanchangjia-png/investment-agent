@@ -576,6 +576,7 @@ def api_data():
 
     realized_pnl = agent.get_realized_pnl_total()
     unrealized_pnl = total_pnl - realized_pnl
+    gold_sold_total = agent.get_gold_sold_total()
 
     # 已清仓股票（持股数=0）
     cleared_stocks = agent.get_cleared_positions()
@@ -586,6 +587,7 @@ def api_data():
         "total_pnl": total_pnl,
         "unrealized_pnl": unrealized_pnl,
         "realized_pnl": realized_pnl,
+        "gold_sold_total": gold_sold_total,
         "total_return_pct": round(total_pnl / (total_value - total_pnl) * 100, 2) if (total_value - total_pnl) > 0 else 0,
         "net_capital": net_capital,
         "true_pnl": true_pnl,
