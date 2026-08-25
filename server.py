@@ -567,11 +567,18 @@ def api_data():
     true_pnl = round(total_value - net_capital, 2) if net_capital > 0 else total_pnl
 
     # 当日出入金净额（用于调整今日盈亏）
+    # 上一个净值快照已包含该日全部交易，因此只统计严格晚于该日的出入金，
+    # 避免快照日当天收盘后发生的黄金卖出等取现被误算成今日亏损
     today = datetime.now().strftime("%Y-%m-%d")
+    history = agent.load_history()
+    prev_date = today
+    for r in history:
+        if r["日期"] != today:
+            prev_date = r["日期"]
     all_flows = agent.load_capital_flows()
     today_net_flow = sum(
         f["amount"] if f["type"] == "存入" else -f["amount"]
-        for f in all_flows if f["date"].startswith(today)
+        for f in all_flows if str(f["date"])[:10] > prev_date
     )
 
     realized_pnl = agent.get_realized_pnl_total()
