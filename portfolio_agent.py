@@ -124,10 +124,10 @@ def save_holdings(holdings_data):
         name = d["名称"]
         qty = d.get("数量") or 0
         cost = d.get("成本价") or 0
-        price = d.get("现价") or price_map.get(name, cost)
+        price = d.get("现价") or price_map.get(name) or max(cost, 0)
 
         if d["类别"] == "股票":
-            if qty > 0 and cost > 0:
+            if qty > 0:
                 market_value = round(qty * price, 2)
                 cost_total = round(qty * cost, 2)
                 pnl = round(market_value - cost_total, 2)
@@ -987,7 +987,7 @@ def update_holdings_with_prices(holdings, prices, prev_closes=None):
             h["昨收"] = prev_closes.get(name, 0)
 
             # 计算股票市值和盈亏
-            if h["类别"] == "股票" and h["数量"] > 0 and h["成本价"] > 0:
+            if h["类别"] == "股票" and h["数量"] > 0:
                 h["市值"] = round(h["数量"] * h["现价"], 2)
                 h["盈亏"] = round(h["市值"] - h["数量"] * h["成本价"], 2)
                 cost_total = h["数量"] * h["成本价"]
