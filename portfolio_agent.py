@@ -462,13 +462,14 @@ def _weekday_cn(date_str):
 
 
 # ============ 已实现盈亏 ============
-def record_realized_pnl(name, qty=0, price=0, cost=0, action="清仓", amount=None):
+def record_realized_pnl(name, qty=0, price=0, cost=0, action="清仓", amount=None, date=None):
     """记录已实现盈亏
     qty: 变动的股数（正数）
     price: 卖出时价格
     cost: 成本价
     action: "卖出" 或 "清仓"
     amount: 直接指定盈亏金额（手动输入时使用）
+    date: 清仓日期 YYYY-MM-DD，不填则用当前时间
     """
     if amount is not None:
         pnl = round(amount, 2)
@@ -490,8 +491,8 @@ def record_realized_pnl(name, qty=0, price=0, cost=0, action="清仓", amount=No
             ws.column_dimensions["G"].width = 14
         else:
             ws = wb["已实现盈亏"]
-        now = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M")
-        ws.append([now, name, action, qty, round(price, 2), round(cost, 2), round(pnl, 2)])
+        record_date = str(date).strip() if date else datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M")
+        ws.append([record_date, name, action, qty, round(price, 3), round(cost, 3), round(pnl, 2)])
         wb.save(EXCEL_PATH)
         wb.close()
         print(f"📝 已记录已实现盈亏: {name} {action} {qty}股, 盈亏 {pnl:+,.0f}元")
@@ -558,7 +559,7 @@ def get_realized_pnl_records():
         return []
 
 
-def update_realized_pnl(row_num, name=None, amount=None):
+def update_realized_pnl(row_num, name=None, amount=None, date=None, qty=None, price=None, cost=None):
     """编辑已实现盈亏记录
     row_num: Excel行号(1-based)
     """
@@ -574,6 +575,14 @@ def update_realized_pnl(row_num, name=None, amount=None):
             return False
         if name is not None:
             ws.cell(row=row_num, column=2, value=name)
+        if date is not None:
+            ws.cell(row=row_num, column=1, value=str(date).strip())
+        if qty is not None:
+            ws.cell(row=row_num, column=4, value=qty)
+        if price is not None:
+            ws.cell(row=row_num, column=5, value=round(float(price), 3))
+        if cost is not None:
+            ws.cell(row=row_num, column=6, value=round(float(cost), 3))
         if amount is not None:
             ws.cell(row=row_num, column=7, value=round(float(amount), 2))
         wb.save(EXCEL_PATH)

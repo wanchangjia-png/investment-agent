@@ -1103,7 +1103,13 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                     if not row:
                         self._send_json({"success": False, "error": "缺少行号"})
                         return
-                    ok = agent.update_realized_pnl(int(row), name=name or None, amount=amount)
+                    ok = agent.update_realized_pnl(
+                        int(row), name=name or None, amount=amount,
+                        date=data.get("date") or None,
+                        qty=data.get("qty") if data.get("qty") not in (None, "") else None,
+                        price=data.get("price") if data.get("price") not in (None, "") else None,
+                        cost=data.get("cost") if data.get("cost") not in (None, "") else None,
+                    )
                     if ok:
                         agent.sync_portfolio_to_github()
                     self._send_json({"success": ok})
@@ -1119,10 +1125,23 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                 else:
                     name = data.get("name", "").strip()
                     amount = float(data.get("amount", 0))
-                    if not name or amount == 0:
-                        self._send_json({"success": False, "error": "请选择股票并输入盈亏金额"})
+                    qty = data.get("qty")
+                    price = data.get("price")
+                    cost = data.get("cost")
+                    if not name:
+                        self._send_json({"success": False, "error": "请选择股票"})
                         return
-                    agent.record_realized_pnl(name, amount=amount)
+                    if amount == 0 and not (qty and price and cost):
+                        self._send_json({"success": False, "error": "请输入盈亏金额，或填写股数/卖出价/成本价"})
+                        return
+                    agent.record_realized_pnl(
+                        name,
+                        qty=float(qty or 0),
+                        price=float(price or 0),
+                        cost=float(cost or 0),
+                        amount=amount if amount != 0 else None,
+                        date=data.get("date") or None,
+                    )
                     agent.sync_portfolio_to_github()
                     self._send_json({"success": True})
             except Exception as e:

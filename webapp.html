@@ -490,17 +490,33 @@ tr:hover { background: #f8f9ff; }
         <button class="close-btn" onclick="hideRealizedPnl()">&times;</button>
         <h2>📋 清仓记录</h2>
         <div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #eee;">
-            <p style="font-size:12px;color:#888;margin-bottom:10px;">选择已清仓的股票，手动输入实现盈亏金额（负数为亏损）。</p>
+            <p style="font-size:12px;color:#888;margin-bottom:10px;">选择已清仓的股票并填写清仓日期；填了股数/卖出价/成本价会自动算盈亏，也能直接手填盈亏金额。</p>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                 <div class="field" id="rpNameField">
                     <label>股票名称</label>
-                    <select id="rpName" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;">
+                    <select id="rpName" onchange="rpFillCost()" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;">
                         <option value="">请选择...</option>
                     </select>
                     <input type="text" id="rpNameInput" style="display:none;width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;" placeholder="输入股票名称">
                 </div>
                 <div class="field">
-                    <label>盈亏金额（元）</label>
+                    <label>清仓日期</label>
+                    <input type="date" id="rpDate" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;">
+                </div>
+                <div class="field">
+                    <label>股数</label>
+                    <input type="number" step="1" id="rpQty" oninput="rpAutoCalcPnl()" placeholder="如：800" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;">
+                </div>
+                <div class="field">
+                    <label>卖出价</label>
+                    <input type="number" step="0.001" id="rpPrice" oninput="rpAutoCalcPnl()" placeholder="如：15.264" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;">
+                </div>
+                <div class="field">
+                    <label>成本价</label>
+                    <input type="number" step="0.001" id="rpCost" oninput="rpAutoCalcPnl()" placeholder="选择股票后自动带出" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;">
+                </div>
+                <div class="field">
+                    <label>盈亏金额（元，自动计算，可改）</label>
                     <input type="number" step="0.01" id="rpAmount" placeholder="亏损填负数，如：-5000" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;">
                 </div>
             </div>
@@ -1428,16 +1444,73 @@ function showRealizedPnl() {
     document.getElementById("rpName").style.display = "";
     document.getElementById("rpNameInput").style.display = "none";
     document.getElementById("rpNameInput").value = "";
-    // 填充股票下拉
+    // 填充股票下拉（含已清仓股票，避免清仓后选不到）
     const sel = document.getElementById("rpName");
     sel.innerHTML = '<option value="">请选择...</option>';
+    const names = new Set();
     if (state.data && state.data.stocks) {
-        state.data.stocks.forEach(s => {
-            sel.innerHTML += `<option value="${escapeHtml(s.name)}">${escapeHtml(s.name)}</option>`;
-        });
+        state.data.stocks.forEach(s => names.add(s.name));
     }
+    if (state.data && state.data.cleared_stocks) {
+        state.data.cleared_stocks.forEach(s => names.add(s.name));
+    }
+    names.forEach(n => {
+        sel.innerHTML += `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`;
+    });
+    const today = new Date();
+    const pad = n => String(n).padStart(2, "0");
+    document.getElementById("rpDate").value =
+        `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+    document.getElementById("rpQty").value = "";
+    document.getElementById("rpPrice").value = "";
+    document.getElementById("rpCost").value = "";
     document.getElementById("rpAmount").value = "";
     loadRealizedPnlHistory();
+}
+
+function rpFillCost() {
+    const name = document.getElementById("rpName").value;
+    if (!name || !state.data) return;
+    let cost = null;
+    const active = (state.data.stocks || []).find(s => s.name === name);
+    if (active) cost = active.cost;
+    if (cost === null && state.data.cleared_stocks) {
+        const cleared = state.data.cleared_stocks.find(s => s.name === name);
+        if (cleared) cost = cleared.cost;
+    }
+    if (cost !== null && cost !== undefined && cost !== 0) {
+        document.getElementById("rpCost").value = cost;
+        rpAutoCalcPnl();
+    }
+}
+
+function rpAutoCalcPnl() {
+    const qty = parseFloat(document.getElementById("rpQty").value);
+    const price = parseFloat(document.getElementById("rpPrice").value);
+    const costRaw = document.getElementById("rpCost").value;
+    const cost = parseFloat(costRaw);
+    if (qty > 0 && price > 0 && costRaw !== "" && !isNaN(cost)) {
+        document.getElementById("rpAmount").value = ((price - cost) * qty).toFixed(2);
+    }
+}
+
+function rpCollect() {
+    const qtyRaw = document.getElementById("rpQty").value;
+    const priceRaw = document.getElementById("rpPrice").value;
+    const costRaw = document.getElementById("rpCost").value;
+    const amountRaw = document.getElementById("rpAmount").value;
+    const qty = qtyRaw === "" ? null : parseFloat(qtyRaw);
+    const price = priceRaw === "" ? null : parseFloat(priceRaw);
+    const cost = costRaw === "" ? null : parseFloat(costRaw);
+    let amount = amountRaw === "" ? null : parseFloat(amountRaw);
+    if (amount === null && qty && price !== null && cost !== null) {
+        amount = Math.round((price - cost) * qty * 100) / 100;
+    }
+    return {
+        name: document.getElementById("rpNameInput").value.trim() || document.getElementById("rpName").value,
+        date: document.getElementById("rpDate").value,
+        qty, price, cost, amount,
+    };
 }
 
 function hideRealizedPnl() {
@@ -1447,15 +1520,22 @@ function hideRealizedPnl() {
 async function saveRealizedPnl() {
     if (rpEditingRow) {
         // 编辑模式
-        const name = document.getElementById("rpNameInput").value.trim() || document.getElementById("rpName").value;
-        const amount = parseFloat(document.getElementById("rpAmount").value);
-        if (!name) { alert("请输入股票名称"); return; }
-        if (isNaN(amount)) { alert("请输入盈亏金额"); return; }
+        const rec = rpCollect();
+        if (!rec.name) { alert("请输入股票名称"); return; }
+        if (rec.amount === null && !(rec.qty && rec.price !== null && rec.cost !== null)) {
+            alert("请输入盈亏金额，或填写股数/卖出价/成本价");
+            return;
+        }
         try {
             const res = await fetch("/api/realized-pnl", {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({action: "update", row: rpEditingRow, name, amount})
+                body: JSON.stringify({
+                    action: "update", row: rpEditingRow,
+                    name: rec.name, date: rec.date,
+                    qty: rec.qty, price: rec.price, cost: rec.cost,
+                    amount: rec.amount,
+                })
             });
             const data = await res.json();
             if (data.success) {
@@ -1477,20 +1557,29 @@ async function saveRealizedPnl() {
     }
 
     // 新增模式
-    const name = document.getElementById("rpName").value;
-    const amount = parseFloat(document.getElementById("rpAmount").value);
-    if (!name) { alert("请选择股票"); return; }
-    if (isNaN(amount) || amount === 0) { alert("请输入盈亏金额（非零）"); return; }
+    const rec = rpCollect();
+    if (!rec.name) { alert("请选择股票"); return; }
+    if (rec.amount === null && !(rec.qty && rec.price !== null && rec.cost !== null)) {
+        alert("请输入盈亏金额，或填写股数/卖出价/成本价");
+        return;
+    }
     try {
         const res = await fetch("/api/realized-pnl", {
             method: "POST",
             headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({name, amount})
+            body: JSON.stringify({
+                name: rec.name, date: rec.date,
+                qty: rec.qty, price: rec.price, cost: rec.cost,
+                amount: rec.amount,
+            })
         });
         const data = await res.json();
         if (data.success) {
             loadRealizedPnlHistory();
             document.getElementById("rpName").value = "";
+            document.getElementById("rpQty").value = "";
+            document.getElementById("rpPrice").value = "";
+            document.getElementById("rpCost").value = "";
             document.getElementById("rpAmount").value = "";
             refreshData();
         } else {
@@ -1544,6 +1633,10 @@ function editRealizedPnl(row) {
     const nameInput = document.getElementById("rpNameInput");
     nameInput.style.display = "";
     nameInput.value = r.name;
+    document.getElementById("rpDate").value = (r.date || "").slice(0, 10);
+    document.getElementById("rpQty").value = r.qty || "";
+    document.getElementById("rpPrice").value = r.price || "";
+    document.getElementById("rpCost").value = r.cost || "";
     document.getElementById("rpAmount").value = r.pnl;
 }
 
@@ -1555,6 +1648,9 @@ function cancelEditRealizedPnl() {
     document.getElementById("rpName").style.display = "";
     document.getElementById("rpNameInput").style.display = "none";
     document.getElementById("rpNameInput").value = "";
+    document.getElementById("rpQty").value = "";
+    document.getElementById("rpPrice").value = "";
+    document.getElementById("rpCost").value = "";
     document.getElementById("rpAmount").value = "";
 }
 
