@@ -759,6 +759,8 @@ function render() {
     // 图表
     renderCharts(d);
     renderHistory(d.history);
+    // 已清仓页也要跟着刷新，否则保存清仓记录后看不到变化
+    renderCleared();
 }
 
 function renderCharts(d) {
