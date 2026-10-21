@@ -935,34 +935,23 @@ def _save_briefing(day, content, source):
 
 
 def _rule_briefing(snap):
-    """不依赖 AI 的兜底晨报"""
-    p = snap.get("performance", {}).get("metrics", {})
-    pf = snap.get("portfolio", {})
-    day = datetime.now().strftime("%m月%d日")
-    lines = [f"☀️ {day} 持仓晨报", ""]
-    lines.append(f"总资产 {pf.get('total_value', 0):,.0f} 元，累计盈亏 {pf.get('total_pnl', 0):+,.0f} 元。")
-    if p:
-        lines.append(
-            f"自 {p.get('start_date', '')} 以来账户 {p.get('account_return', 0):+.1f}%，"
-            f"沪深300 {p.get('benchmark_return', 0):+.1f}%（超额 {p.get('excess_return', 0):+.1f}pp）；"
-            f"最大回撤 {p.get('max_drawdown', 0):.1f}%。"
-        )
-    alerts = snap.get("alerts") or []
-    if alerts:
+    """不依赖 AI 的兜底晨报：只说结论、原因和触发条件"""
+    v = snap.get("verdict") or {}
+    h = snap.get("health") or {}
+    rec = snap.get("recovery") or {}
+    lines = [v.get("headline", "今天：持有观察"), ""]
+    if v.get("reasons"):
+        lines.append("为什么：")
+        for r in v["reasons"]:
+            lines.append(f"- {r}")
+    if v.get("triggers"):
         lines.append("")
-        lines.append("今日关注：")
-        for a in alerts[:5]:
-            lines.append(f"· {a['name']}：{a['text']}")
-    risk_rows = snap.get("risks") or []
-    if risk_rows:
-        lines.append("")
-        lines.append("待处理风险：")
-        for r in risk_rows[:4]:
-            lines.append(f"· [{r['level']}] {r['title']}：{r['detail']}")
+        lines.append("怎么做：")
+        for t in v["triggers"]:
+            lines.append(f"- {t}")
     lines.append("")
-    lines.append("行动清单：")
-    for a in (snap.get("actions") or [])[:4]:
-        lines.append(f"· [{a['priority']}] {a['action']}")
+    lines.append(f"账户健康分 {h.get('score', 0)}/100（{h.get('level', '')}）；"
+                 f"整体回本需上涨 {rec.get('need_pct', 0):.1f}%。")
     return "\n".join(lines)
 
 
@@ -1009,32 +998,39 @@ def _ai_briefing(snap):
             f"- {h['名称']} {h['数量']}股 现价{h['现价']:.2f} 成本{h['成本价']:.2f} "
             f"浮亏{(h['收益率'] or 0)*100:.1f}% 占总资产{(h['市值']/pf.get('total_value', 1)*100):.1f}%"
         )
-    context = f"""## 账户
+    v = snap.get("verdict") or {}
+    h = snap.get("health") or {}
+    rec = snap.get("recovery") or {}
+    context = f"""## 系统结论（必须遵守，不要改变方向）
+{v.get('headline', '')}
+原因：{('；'.join(v.get('reasons', []))) or '无'}
+系统给出的触发条件：{('；'.join(v.get('triggers', []))) or '无'}
+
+## 账户
 总资产 {pf.get('total_value', 0):,.0f} 元；累计盈亏 {pf.get('total_pnl', 0):+,.0f} 元；净投入本金 {pf.get('net_capital', 0):,.0f} 元。
 现金占总资产 {exp.get('cash_pct', 0):.1f}%；前三大持仓合计 {exp.get('top3_pct', 0):.1f}%。
-区间（{p.get('start_date', '')} 起）账户收益 {p.get('account_return', 0):+.1f}%，沪深300 {p.get('benchmark_return', 0):+.1f}%，超额 {p.get('excess_return', 0):+.1f}pp；最大回撤 {p.get('max_drawdown', 0):.1f}%；年化波动 {p.get('volatility', 0):.1f}%。
+健康分 {h.get('score', 0)}/100（{h.get('level', '')}），扣分项：{('；'.join(d['reason'] for d in h.get('deductions', []))) or '无'}。
+整体回本需上涨 {rec.get('need_pct', 0):.1f}%（还差 {rec.get('need_amount', 0):,.0f} 元）。
+区间（{p.get('start_date', '')} 起）账户收益 {p.get('account_return', 0):+.1f}%，沪深300 {p.get('benchmark_return', 0):+.1f}%，超额 {p.get('excess_return', 0):+.1f}pp；最大回撤 {p.get('max_drawdown', 0):.1f}%。
 
 ## 持仓
 {chr(10).join(lines)}
 
-## 盈亏归因（负 contribution 是拖累）
-{chr(10).join(f"- {x['name']}：{x['pnl']:+,.0f} 元，占亏损 {x['share']:.0f}%" for x in attr[:6])}
+## 盈亏归因（负数是拖累）
+{chr(10).join(f"- {x['name']}：{x['pnl']:+,.0f} 元，占亏损 {x['share']:.0f}%" for x in attr[:5])}
 
 ## 今日异动
-{chr(10).join(f"- {a['name']}：{a['text']}" for a in (snap.get('alerts') or [])[:6]) or '- 无异动'}
-
-## 系统识别风险
-{chr(10).join(f"- [{r['level']}] {r['title']}：{r['detail']} 建议：{r['action']}" for r in (snap.get('risks') or [])) or '- 无'}
+{chr(10).join(f"- {a['name']}：{a['text']}" for a in (snap.get('alerts') or [])[:5]) or '- 无异动'}
 """
-    system = """你是万万的专属 A 股投资助手，风格克制、专业、说人话。
-写一份每日盘前晨报，要求：
-1. 开头一句话给结论（今天该守还是该动）
-2. 「持仓速览」2-3 条，指出最需要关注的持仓变化
-3. 「今日关注」2-3 条，结合异动和风险，给出具体价位（能算就算）
-4. 「操作清单」最多 3 条，每条必须可执行，含标的、方向、股数或金额、触发价
-5. 不吹不黑，不承诺收益；数据不足就说不确定
-总长度 400-600 字，用 Markdown 的 ### 小标题和 - 列表，不要用表格。"""
-    return _call_llm_text(system, context, max_tokens=1100, temperature=0.4)
+    system = """你是万万的 A 股投资助手。把数据翻译成人话，不要当分析师表演。
+硬性要求：
+1. 只输出 3 条，每条一行，以「-」开头，总字数不超过 220 字
+2. 只能引用上面给出的数字（现价、成本、回本涨幅、盈亏、回撤、健康分），禁止编造支撑位、压力位、技术形态、宏观消息、公司新闻
+3. 第一条必须与系统结论一致，不能给相反的操作建议
+4. 可以指出最该关注的一只票，并说明为什么（用给出的浮亏/占比/异动数据）
+5. 不承诺收益，不用「大概率」「必涨」这类词
+不要标题，不要表格，不要结尾总结。"""
+    return _call_llm_text(system, context, max_tokens=400, temperature=0.3)
 
 
 def api_briefing(force=False):

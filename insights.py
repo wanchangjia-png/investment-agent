@@ -341,12 +341,156 @@ def alerts(stocks):
     return out
 
 
+def recovery():
+    """离回本还有多远：账户整体 + 每只亏损持仓"""
+    holdings = agent.load_portfolio()
+    total = sum(_num(h["市值"]) for h in holdings)
+    net_capital = _num(agent.get_net_capital()[0])
+    need_amount = max(net_capital - total, 0)
+    positions = []
+    for h in holdings:
+        if h["类别"] != "股票" or _num(h["数量"]) <= 0:
+            continue
+        cost, price, qty = _num(h["成本价"]), _num(h["现价"]), _num(h["数量"])
+        if cost <= 0 or price <= 0 or price >= cost:
+            continue
+        positions.append({
+            "name": h["名称"],
+            "price": round(price, 2),
+            "cost": round(cost, 2),
+            "qty": int(qty),
+            "rise_needed": round((cost / price - 1) * 100, 1),
+            "loss": round((price - cost) * qty, 2),
+            "value": round(price * qty, 2),
+            "account": h["账户"],
+        })
+    positions.sort(key=lambda x: x["loss"])
+    return {
+        "total_value": round(total, 2),
+        "net_capital": round(net_capital, 2),
+        "need_amount": round(need_amount, 2),
+        "need_pct": round(need_amount / total * 100, 2) if total else 0,
+        "positions": positions,
+    }
+
+
+def health(perf=None, exp=None):
+    """0-100 健康分，扣分项可解释"""
+    perf = perf or performance()
+    exp = exp or exposure()
+    m = perf.get("metrics", {})
+    score = 100.0
+    deductions = []
+
+    def cut(points, reason):
+        nonlocal score
+        score -= points
+        deductions.append({"points": points, "reason": reason})
+
+    dd = m.get("max_drawdown", 0)
+    if dd <= -12:
+        cut(20, f"最大回撤 {dd:.1f}%")
+    elif dd <= -8:
+        cut(12, f"最大回撤 {dd:.1f}%")
+    elif dd <= -5:
+        cut(6, f"最大回撤 {dd:.1f}%")
+
+    top1 = exp.get("top1_pct", 0)
+    if top1 > 25:
+        cut(18, f"第一大持仓占 {top1:.1f}%")
+    elif top1 > 20:
+        cut(10, f"第一大持仓占 {top1:.1f}%")
+    elif top1 > 15:
+        cut(5, f"第一大持仓占 {top1:.1f}%")
+
+    top3 = exp.get("top3_pct", 0)
+    if top3 > 50:
+        cut(10, f"前三大持仓占 {top3:.1f}%")
+    elif top3 > 45:
+        cut(5, f"前三大持仓占 {top3:.1f}%")
+
+    top_sector = (exp.get("sectors") or [{}])[0]
+    if top_sector.get("pct_total", 0) > 35:
+        cut(12, f"{top_sector['sector']} 占 {top_sector['pct_total']:.1f}%")
+    elif top_sector.get("pct_total", 0) > 30:
+        cut(6, f"{top_sector['sector']} 占 {top_sector['pct_total']:.1f}%")
+
+    cash = exp.get("cash_pct", 0)
+    if cash < 5:
+        cut(15, f"现金仅 {cash:.1f}%")
+    elif cash < 10:
+        cut(8, f"现金仅 {cash:.1f}%")
+    elif cash > 30:
+        cut(4, f"现金闲置 {cash:.1f}%")
+
+    deep = [p for p in exp.get("positions", []) if p.get("return_pct", 0) <= -20]
+    if deep:
+        cut(min(18, 6 * len(deep)), f"{len(deep)} 只持仓浮亏超 20%")
+
+    count = len([p for p in exp.get("positions", []) if p.get("value", 0) > 0])
+    if count < 4:
+        cut(8, f"仅持有 {count} 只股票")
+
+    score = max(0, min(100, round(score)))
+    level = "健康" if score >= 80 else "一般" if score >= 65 else "偏弱" if score >= 50 else "高风险"
+    deductions.sort(key=lambda x: -x["points"])
+    return {"score": score, "level": level, "deductions": deductions[:4]}
+
+
+def verdict(snap):
+    """把数据压成一句话：今天该不该动手 + 为什么 + 触发条件"""
+    alerts = snap.get("alerts") or []
+    risk_rows = snap.get("risks") or []
+    perf_m = (snap.get("performance") or {}).get("metrics", {})
+    exp = snap.get("exposure") or {}
+    rec = snap.get("recovery") or {}
+
+    high_risks = [r for r in risk_rows if r["level"] == "高"]
+    high_alerts = [a for a in alerts if a["level"] == "高"]
+
+    if high_risks or high_alerts:
+        headline = "今天：不加仓，先控风险"
+        tone = "warning"
+    elif risk_rows:
+        headline = "今天：不开新仓，处理现有持仓"
+        tone = "caution"
+    else:
+        headline = "今天：不用动手，持有观察"
+        tone = "calm"
+
+    reasons = []
+    for a in high_alerts[:2]:
+        reasons.append(f"{a['name']} {a['text']}")
+    for r in high_risks[:2]:
+        reasons.append(r["detail"])
+    if len(reasons) < 3 and rec.get("need_pct", 0) > 0:
+        reasons.append(f"账户回本需整体上涨 {rec['need_pct']:.1f}%")
+    if len(reasons) < 3 and exp.get("cash_pct"):
+        reasons.append(f"现金占总资产 {exp['cash_pct']:.1f}%")
+
+    triggers = []
+    for a in high_alerts[:1] + [x for x in alerts if x["level"] == "中"][:1]:
+        triggers.append(f"{a['name']}：{a['text']}，先看有没有基本面消息，不做情绪化补仓。")
+    for p in rec.get("positions", [])[:2]:
+        if p["rise_needed"] >= 15:
+            triggers.append(
+                f"{p['name']} 现价 {p['price']:.2f}，回本需涨 {p['rise_needed']:.1f}% 到 {p['cost']:.2f}；"
+                f"反弹 10%（{p['price']*1.1:.2f}）可先减 1/3。"
+            )
+    if exp.get("cash_pct", 0) > 20:
+        triggers.append(f"现金 {exp['cash']:,.0f} 元（{exp['cash_pct']:.1f}%）：回撤未收窄前不动，不抄底。")
+    if not triggers:
+        triggers.append("没有触发条件，今天不需要操作。")
+
+    return {"headline": headline, "tone": tone, "reasons": reasons[:3], "triggers": triggers[:3]}
+
+
 def snapshot(stocks=None):
     perf = performance()
     attr = attribution()
     exp = exposure()
     risk_rows = risks(perf=perf, attr=attr, exp=exp)
-    return {
+    snap = {
         "time": datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S"),
         "performance": perf,
         "attribution": attr,
@@ -354,7 +498,11 @@ def snapshot(stocks=None):
         "risks": risk_rows,
         "actions": actions(risk_rows),
         "alerts": alerts(stocks or []),
+        "health": health(perf, exp),
+        "recovery": recovery(),
     }
+    snap["verdict"] = verdict(snap)
+    return snap
 
 
 # ============ 决策记录 ============

@@ -171,6 +171,39 @@ tr:hover { background: #f8f9ff; }
 .status-pill { font-size: 11px; padding: 1px 7px; border-radius: 8px; background: #f0f0f0; color: #666; }
 .status-done { background: #eef7ee; color: #2E7D32; }
 
+.verdict-card { border-radius: 14px; padding: 18px 20px; margin-bottom: 14px; border: 1px solid #e8ecf5;
+    background: linear-gradient(135deg, #f8fafc, #eef3fb); }
+.verdict-card.warning { background: linear-gradient(135deg, #fff7f7, #ffecec); border-color: #f0caca; }
+.verdict-card.caution { background: linear-gradient(135deg, #fffdf6, #fff5df); border-color: #efe0b8; }
+.verdict-card.calm { background: linear-gradient(135deg, #f7fcf8, #eaf7ee); border-color: #cfe8d6; }
+.verdict-headline { font-size: 20px; font-weight: 700; color: #1a2b4a; letter-spacing: .5px; }
+.verdict-reasons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.verdict-reasons span { font-size: 12px; background: rgba(255,255,255,.78); border: 1px solid rgba(0,0,0,.06);
+    padding: 3px 9px; border-radius: 12px; color: #444; }
+.verdict-triggers { margin-top: 10px; font-size: 12.5px; color: #555; line-height: 1.7; }
+.verdict-triggers div { display: flex; gap: 6px; margin-top: 3px; }
+
+.loss-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin-bottom: 9px; }
+.loss-row .lname { width: 76px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.loss-row .ltrack { flex: 1; height: 10px; background: #f0f2f6; border-radius: 5px; overflow: hidden; }
+.loss-row .lfill { height: 100%; background: #009900; border-radius: 5px; }
+.loss-row .lamt { width: 88px; text-align: right; color: #009900; font-variant-numeric: tabular-nums; }
+.loss-row .lshare { width: 42px; text-align: right; color: #999; }
+.rec-row { font-size: 12.5px; margin-bottom: 10px; }
+.rec-top { display: flex; justify-content: space-between; }
+.rec-top .need { color: #CC0000; font-weight: 600; }
+.rec-bar { height: 6px; background: #f0f2f6; border-radius: 3px; margin-top: 4px; overflow: hidden; }
+.rec-bar i { display: block; height: 100%; background: #FFC000; }
+.rec-total { font-size: 13px; padding-bottom: 8px; margin-bottom: 10px; border-bottom: 1px dashed #eee; }
+
+.more-wrap { position: relative; }
+.more-menu { display: none; position: absolute; top: 100%; right: 0; background: #fff; border: 1px solid #eee;
+    border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.12); z-index: 50; min-width: 130px; padding: 4px; }
+.more-menu.show { display: block; }
+.more-menu button { display: block; width: 100%; text-align: left; padding: 8px 12px; border: none;
+    background: none; font-size: 13px; cursor: pointer; border-radius: 6px; white-space: nowrap; }
+.more-menu button:hover { background: #f0f4ff; color: #2F5496; }
+
 @media (max-width: 900px) {
     .metric-row { grid-template-columns: repeat(3, 1fr); }
     .today-grid { grid-template-columns: 1fr; }
@@ -309,36 +342,50 @@ tr:hover { background: #f8f9ff; }
             <div class="tab-bar">
                 <button class="tab-btn active" onclick="switchTab('today',this)">☀️ 今日</button>
                 <button class="tab-btn" onclick="switchTab('holdings',this)">📋 持仓</button>
-                <button class="tab-btn" onclick="switchTab('cleared',this)">📁 已清仓</button>
-                <button class="tab-btn" onclick="switchTab('charts',this)">📊 图表</button>
-                <button class="tab-btn" onclick="switchTab('kline',this)">📈 K线</button>
                 <button class="tab-btn" onclick="switchTab('risks',this)">🧭 诊断</button>
-                <button class="tab-btn" onclick="switchTab('history',this)">📈 净值</button>
-                <button class="tab-btn" onclick="switchTab('breakeven',this)">🎯 回本</button>
                 <button class="tab-btn" onclick="switchTab('decisions',this)">🗂 决策</button>
-                <button class="tab-btn" onclick="switchTab('advice',this)">💡 建议</button>
+                <div class="more-wrap">
+                    <button class="tab-btn" id="moreBtn" onclick="toggleMoreMenu(event)">⋯ 更多</button>
+                    <div class="more-menu" id="moreMenu">
+                        <button onclick="switchTab('breakeven')">🎯 回本明细</button>
+                        <button onclick="switchTab('cleared')">📁 已清仓</button>
+                        <button onclick="switchTab('history')">📈 净值历史</button>
+                        <button onclick="switchTab('kline')">📉 K线</button>
+                        <button onclick="switchTab('charts')">📊 资产图表</button>
+                        <button onclick="switchTab('advice')">💡 旧版建议</button>
+                    </div>
+                </div>
             </div>
 
             <div class="tab-content active" id="tabToday">
-                <div class="brief-card">
-                    <div class="brief-head">
-                        <h3>☀️ 今日晨报</h3>
-                        <div style="display:flex;align-items:center;gap:8px;">
-                            <span class="badge" id="briefSource">生成中…</span>
-                            <button class="btn btn-sm btn-outline" onclick="loadToday(true)">🔄 重新生成</button>
-                        </div>
-                    </div>
-                    <div class="brief-body" id="briefBody"><span class="spinner"></span> 正在生成今日晨报…</div>
+                <div class="verdict-card" id="verdictCard">
+                    <div class="verdict-headline" id="verdictHeadline"><span class="spinner"></span> 正在判断今天该不该动手…</div>
+                    <div class="verdict-reasons" id="verdictReasons"></div>
+                    <div class="verdict-triggers" id="verdictTriggers"></div>
                 </div>
+
+                <div class="metric-row" id="todayMetrics"></div>
+
                 <div class="today-grid">
                     <div class="panel">
-                        <h4>⚡ 今日关注</h4>
-                        <div id="alertList"><div style="font-size:12px;color:#999;">加载中…</div></div>
+                        <h4>钱是怎么亏的（前 3 大拖累）</h4>
+                        <div id="lossAttribution"><div style="font-size:12px;color:#999;">加载中…</div></div>
                     </div>
                     <div class="panel">
-                        <h4>✅ 行动清单</h4>
-                        <div id="actionList"><div style="font-size:12px;color:#999;">加载中…</div></div>
+                        <h4>离回本还差多少</h4>
+                        <div id="recoveryList"><div style="font-size:12px;color:#999;">加载中…</div></div>
                     </div>
+                </div>
+
+                <div class="brief-card" style="margin-top:14px;">
+                    <div class="brief-head">
+                        <h3>AI 解读（只看数据和结论，不编价位）</h3>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span class="badge" id="briefSource">生成中…</span>
+                            <button class="btn btn-sm btn-outline" onclick="loadToday(true)">换一版</button>
+                        </div>
+                    </div>
+                    <div class="brief-body" id="briefBody"><span class="spinner"></span> 正在生成…</div>
                 </div>
             </div>
 
@@ -877,6 +924,8 @@ function render() {
     renderHistory(d.history);
     // 已清仓页也要跟着刷新，否则保存清仓记录后看不到变化
     renderCleared();
+    // 今日盈亏随行情刷新
+    if (state.insights) renderTodayMetrics(state.insights);
 }
 
 function renderCharts(d) {
@@ -1051,13 +1100,17 @@ function renderCleared() {
 }
 
 // ============ Tab 切换 ============
+const HIDDEN_TABS = ["cleared", "history", "kline", "charts", "advice", "breakeven"];
+
 function switchTab(name, btn) {
     document.querySelectorAll(".tab-btn").forEach(t=>t.classList.remove("active"));
     document.querySelectorAll(".tab-content").forEach(t=>t.classList.remove("active"));
-    if (btn) btn.classList.add("active");
+    const activeBtn = btn || (HIDDEN_TABS.includes(name) ? document.getElementById("moreBtn") : null);
+    if (activeBtn) activeBtn.classList.add("active");
     const tabName = "tab" + name.charAt(0).toUpperCase() + name.slice(1);
     const tab = document.getElementById(tabName);
     if (tab) tab.classList.add("active");
+    closeMoreMenu();
     // 按需加载数据
     if (name === "breakeven") loadBreakeven();
     if (name === "kline") loadKlineData();
@@ -1066,6 +1119,18 @@ function switchTab(name, btn) {
     if (name === "risks") loadInsights();
     if (name === "decisions") loadDecisions();
 }
+
+function toggleMoreMenu(e) {
+    e.stopPropagation();
+    document.getElementById("moreMenu").classList.toggle("show");
+}
+
+function closeMoreMenu() {
+    const m = document.getElementById("moreMenu");
+    if (m) m.classList.remove("show");
+}
+
+document.addEventListener("click", closeMoreMenu);
 
 // ============ K线 ============
 let klineChart = null;
@@ -2375,21 +2440,74 @@ async function loadToday(force) {
     }
 }
 
-function renderTodaySide(snap) {
-    const alerts = snap.alerts || [];
-    const alertEl = document.getElementById("alertList");
-    alertEl.innerHTML = alerts.length ? alerts.map(a => `
-        <div class="alert-item ${a.level === '高' ? 'high' : a.level === '中' ? 'mid' : ''}">
-            <span><b>${escapeHtml(a.name)}</b> · ${escapeHtml(a.text)}</span>
-            <span class="tag">${escapeHtml(a.type)}</span>
-        </div>`).join("") : '<div style="font-size:12px;color:#999;">今日无异常波动</div>';
+function todayPnlValue() {
+    const d = state.data;
+    if (!d) return null;
+    const hist = d.history || [];
+    const todayStr = new Date().toLocaleDateString("en-CA");
+    let prev = null;
+    for (let i = hist.length - 1; i >= 0; i--) {
+        if (hist[i].date !== todayStr) { prev = hist[i].total; break; }
+    }
+    return prev === null ? null : d.total_value - prev - (d.today_net_flow || 0);
+}
 
-    const actions = snap.actions || [];
-    document.getElementById("actionList").innerHTML = actions.map(a => {
-        const cls = a.priority === "今日" ? "pri-today" : a.priority === "本周" ? "pri-week" : "pri-keep";
-        return `<div class="action-item"><span class="pri ${cls}">${escapeHtml(a.priority)}</span>${escapeHtml(a.action)}
-            <div class="reason">${escapeHtml(a.reason)}</div></div>`;
-    }).join("");
+function renderTodayMetrics(snap) {
+    const pf = snap.portfolio || {};
+    const h = snap.health || {};
+    const rec = snap.recovery || {};
+    const d = state.data || {};
+    const today = todayPnlValue();
+    const fmt = v => v === null || v === undefined ? "--" : (v >= 0 ? "+" : "") + Math.round(v).toLocaleString();
+    const col = v => v === null || v === undefined ? "#555" : v >= 0 ? "#CC0000" : "#009900";
+    const healthColor = h.score >= 80 ? "#2E7D32" : h.score >= 65 ? "#A67C00" : "#CC0000";
+    const healthSub = (h.deductions || []).slice(0, 2).map(x => x.reason).join("；") || "无明显扣分";
+    const tiles = [
+        { label: "今日盈亏", value: fmt(today), sub: "较前日收盘", color: col(today) },
+        { label: "累计盈亏", value: fmt(pf.total_pnl), sub: "含已实现", color: col(pf.total_pnl) },
+        { label: "回本需涨", value: (rec.need_pct || 0).toFixed(1) + "%", sub: `还差 ${Math.round(rec.need_amount || 0).toLocaleString()} 元`, color: "#CC0000" },
+        { label: "账户健康分", value: `${h.score || 0}/100`, sub: `${h.level || ""} · ${healthSub}`, color: healthColor },
+    ];
+    document.getElementById("todayMetrics").innerHTML = tiles.map(t =>
+        `<div class="metric-tile"><div class="label">${t.label}</div>
+         <div class="value" style="color:${t.color}">${t.value}</div><div class="sub">${escapeHtml(t.sub)}</div></div>`).join("");
+}
+
+function renderTodaySide(snap) {
+    state.insights = snap;
+    const v = snap.verdict || {};
+    const card = document.getElementById("verdictCard");
+    card.className = "verdict-card " + (v.tone || "");
+    document.getElementById("verdictHeadline").textContent = v.headline || "今天：持有观察";
+    document.getElementById("verdictReasons").innerHTML = (v.reasons || [])
+        .map(r => `<span>${escapeHtml(r)}</span>`).join("");
+    document.getElementById("verdictTriggers").innerHTML = (v.triggers || [])
+        .map(t => `<div><span style="color:#2F5496;">→</span><span>${escapeHtml(t)}</span></div>`).join("");
+
+    renderTodayMetrics(snap);
+
+    // 亏损归因：只显示拖累最大的 3 只
+    const losses = (snap.attribution || {}).items?.filter(x => x.pnl < 0).slice(0, 3) || [];
+    const maxAbs = Math.max(...losses.map(x => Math.abs(x.pnl)), 1);
+    document.getElementById("lossAttribution").innerHTML = losses.length ? losses.map(x => `
+        <div class="loss-row">
+            <span class="lname" title="${escapeHtml(x.name)}">${escapeHtml(x.name)}</span>
+            <span class="ltrack"><span class="lfill" style="width:${Math.max(Math.abs(x.pnl) / maxAbs * 100, 4)}%"></span></span>
+            <span class="lamt">${Math.round(x.pnl).toLocaleString()}</span>
+            <span class="lshare">${x.share}%</span>
+        </div>`).join("") : '<div style="font-size:12px;color:#999;">暂无亏损归因</div>';
+
+    // 回本距离
+    const rec = snap.recovery || {};
+    const positions = (rec.positions || []).slice(0, 4);
+    const totalHtml = `<div class="rec-total">账户整体还需上涨 <b style="color:#CC0000;">${(rec.need_pct || 0).toFixed(1)}%</b>
+        （约 ${Math.round(rec.need_amount || 0).toLocaleString()} 元）才回到本金</div>`;
+    document.getElementById("recoveryList").innerHTML = totalHtml + positions.map(p => `
+        <div class="rec-row">
+            <div class="rec-top"><span>${escapeHtml(p.name)} <span style="color:#999;">${p.qty} 股</span></span>
+            <span class="need">需涨 ${p.rise_needed.toFixed(1)}%</span></div>
+            <div class="rec-bar"><i style="width:${Math.min(p.price / p.cost * 100, 100)}%"></i></div>
+        </div>`).join("");
 
     // 风险 KPI 与诊断页保持一致
     const riskCount = (snap.risks || []).filter(r => r.level !== "低").length;
