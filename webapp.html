@@ -2228,7 +2228,8 @@ function marked(text) {
 }
 
 // ============ 初始化 ============
-loadData();
+// 打开页面先拉一次实时行情，避免看到昨天的旧价格
+refreshData();
 
 // 加载聊天历史（没有历史则显示默认问候）
 if (!loadChatHistory()) {
