@@ -2488,9 +2488,9 @@ async function deleteDecision(i) {
 }
 
 // ============ 初始化 ============
-// 先用本地数据渲染 → 晨报和提醒 → 再刷新实时行情（服务端串行处理，避免排队卡首页）
+// 先用已保存的数据渲染，行情只在点「刷新」时拉取
 loadData();
-loadToday().finally(() => refreshData());
+loadToday();
 
 // 加载聊天历史（没有历史则显示默认问候）
 if (!loadChatHistory()) {
@@ -2509,8 +2509,6 @@ fetch("/api/config").then(r=>r.json()).then(cfg => {
     document.getElementById("modelBadge").textContent = cfg.model || "未配置";
 }).catch(()=>{});
 
-// 每 3 分钟刷新数据
-setInterval(loadData, 3 * 60 * 1000);
 </script>
 </body>
 </html>
