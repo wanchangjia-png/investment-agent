@@ -222,6 +222,18 @@ tr:hover { background: #f8f9ff; }
 .modal { background: #fff; border-radius: 14px; padding: 30px; width: 460px; max-width: 90vw; box-shadow: 0 8px 32px rgba(0,0,0,0.15); }
 .modal h2 { font-size: 18px; color: #2F5496; margin-bottom: 16px; }
 .modal .field { margin-bottom: 14px; }
+.holdings-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.holdings-toolbar span { font-size: 12px; color: #999; }
+.trade-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+.trade-form .field { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.trade-form label { font-size: 12px; color: #666; }
+.trade-form input, .trade-form select { padding: 8px 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; font-family: inherit; }
+.trade-sync { display: flex; align-items: center; gap: 6px; font-size: 13px; margin-top: 12px; }
+.trade-preview { margin-top: 12px; padding: 12px; border-radius: 10px; background: #f7f8fb; border: 1px solid #e8eaf0; font-size: 13px; line-height: 1.8; }
+.trade-preview .warn { color: #B26A00; }
+@media (max-width: 600px) {
+    .trade-form { grid-template-columns: 1fr; }
+}
 .modal .field label { display: block; font-size: 13px; color: #555; margin-bottom: 4px; font-weight: 500; }
 .modal .field input, .modal .field select { width: 100%; padding: 9px 12px; border: 1px solid #ddd; border-radius: 8px;
     font-size: 14px; outline: none; font-family: inherit; }
@@ -345,6 +357,7 @@ tr:hover { background: #f8f9ff; }
                     <div class="more-menu" id="moreMenu">
                         <button onclick="switchTab('breakeven')">🎯 回本明细</button>
                         <button onclick="switchTab('cleared')">📁 已清仓</button>
+                        <button onclick="switchTab('transactions')">🧾 交易复盘</button>
                         <button onclick="switchTab('history')">📈 净值历史</button>
                     </div>
                 </div>
@@ -383,6 +396,10 @@ tr:hover { background: #f8f9ff; }
             </div>
 
             <div class="tab-content" id="tabHoldings">
+                <div class="holdings-toolbar">
+                    <button class="btn btn-sm btn-primary" onclick="showTradeModal()">🧾 记一笔交易</button>
+                    <span>记录买卖后，可在「更多 → 交易复盘」看胜率和逐笔盈亏</span>
+                </div>
                 <div class="table-wrap"><table><thead><tr>
                     <th onclick="sortBy('name')" style="cursor:pointer;">名称 <span class="sort-arrow"></span></th>
                     <th onclick="sortBy('account')" style="cursor:pointer;">账户 <span class="sort-arrow"></span></th>
@@ -432,6 +449,27 @@ tr:hover { background: #f8f9ff; }
 
             <div class="tab-content" id="tabHistory"><div class="history-table" id="historyContainer"></div>
                 <div id="historyEmpty" class="empty-state" style="display:none;"><div class="icon">📈</div><div>暂无历史</div></div>
+            </div>
+
+            <div class="tab-content" id="tabTransactions">
+                <div class="metric-row" id="txnMetrics"></div>
+                <div class="today-grid">
+                    <div class="panel">
+                        <h4>按标的汇总</h4>
+                        <div class="table-wrap"><table><thead><tr>
+                            <th>名称</th><th class="num">买入金额</th><th class="num">卖出金额</th><th class="num">实现盈亏</th><th class="num">笔数</th>
+                        </tr></thead><tbody id="txnByStockBody"></tbody></table></div>
+                        <div id="txnByStockEmpty" class="empty-state" style="display:none;"><div class="icon">🧾</div><div>还没有交易记录</div></div>
+                    </div>
+                    <div class="panel">
+                        <h4>交易明细</h4>
+                        <div class="table-wrap" style="max-height:420px;"><table><thead><tr>
+                            <th>日期</th><th>名称</th><th>方向</th><th class="num">数量</th><th class="num">价格</th><th class="num">实现盈亏</th>
+                        </tr></thead><tbody id="txnBody"></tbody></table></div>
+                        <div id="txnEmpty" class="empty-state" style="display:none;"><div class="icon">📝</div><div>从「持仓 → 记一笔交易」开始</div></div>
+                    </div>
+                </div>
+                <p style="font-size:12px;color:#999;margin-top:12px;">实现盈亏按真实成本计算，与持仓页的摊薄成本口径不同；只统计卖出。</p>
             </div>
 
             <div class="tab-content" id="tabBreakeven">
@@ -565,6 +603,37 @@ tr:hover { background: #f8f9ff; }
         <div class="modal-actions">
             <button class="btn btn-outline" onclick="hideEditHoldings()">取消</button>
             <button class="btn btn-primary" id="saveHoldingsBtn" onclick="saveEditHoldings()">💾 保存</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== 记一笔交易弹窗 ===== -->
+<div class="modal-overlay" id="tradeModal">
+    <div class="modal" style="width:560px;max-width:95vw;max-height:90vh;overflow-y:auto;">
+        <button class="close-btn" onclick="hideTradeModal()">&times;</button>
+        <h2>🧾 记一笔交易</h2>
+        <div class="trade-form">
+            <div class="field"><label>日期</label><input type="datetime-local" id="trDate"></div>
+            <div class="field"><label>方向</label><select id="trDirection" onchange="onTradeDirectionChange()">
+                <option>买入</option><option>卖出</option>
+            </select></div>
+            <div class="field"><label>名称</label><input id="trName" list="stockOptions" placeholder="如 三花智控" onchange="onTradeNameChange()" oninput="invalidateTradePreview()"></div>
+            <div class="field"><label>代码</label><input id="trCode" placeholder="自动带出" oninput="invalidateTradePreview()"></div>
+            <div class="field"><label>数量</label><input type="number" id="trQty" min="0" step="1" oninput="invalidateTradePreview()"></div>
+            <div class="field"><label>成交价</label><input type="number" id="trPrice" min="0" step="0.001" oninput="invalidateTradePreview()"></div>
+            <div class="field"><label>费用</label><input type="number" id="trFee" min="0" step="0.01" value="0" oninput="invalidateTradePreview()"></div>
+            <div class="field"><label>账户</label><select id="trAccount" onchange="invalidateTradePreview()">
+                <option>A股主账户</option><option>账户二（短线）</option>
+            </select></div>
+            <div class="field" style="grid-column:1/-1;"><label>备注（可选）</label><input id="trNote" placeholder="如 止盈/加仓/换仓"></div>
+        </div>
+        <label class="trade-sync"><input type="checkbox" id="trSync" checked onchange="invalidateTradePreview()"> 同时更新持仓和现金</label>
+        <div id="trPreview" class="trade-preview" style="display:none;"></div>
+        <div id="trError" style="color:#CC0000;font-size:13px;margin-top:8px;display:none;"></div>
+        <div class="modal-actions">
+            <button class="btn btn-outline" onclick="hideTradeModal()">取消</button>
+            <button class="btn btn-outline" onclick="previewTrade()">预览</button>
+            <button class="btn btn-primary" id="trConfirmBtn" onclick="confirmTrade()" disabled>确认保存</button>
         </div>
     </div>
 </div>
@@ -1019,7 +1088,7 @@ function renderCleared() {
 }
 
 // ============ Tab 切换 ============
-const HIDDEN_TABS = ["cleared", "history", "breakeven"];
+const HIDDEN_TABS = ["cleared", "history", "breakeven", "transactions"];
 
 function switchTab(name, btn) {
     document.querySelectorAll(".tab-btn").forEach(t=>t.classList.remove("active"));
@@ -1033,6 +1102,7 @@ function switchTab(name, btn) {
     // 按需加载数据
     if (name === "breakeven") loadBreakeven();
     if (name === "cleared") renderCleared();
+    if (name === "transactions") loadTransactions();
     if (name === "today") loadToday();
     if (name === "risks") loadInsights();
     if (name === "decisions") loadDecisions();
@@ -2485,6 +2555,196 @@ async function deleteDecision(i) {
     const r = state.decisions[i];
     if (!r || !confirm(`删除「${r.name}」这条决策记录？`)) return;
     await postDecision({action: "delete", row: r.row});
+}
+
+// ============ 交易流水 / 复盘 ============
+let tradePreview = null;
+
+function showTradeModal() {
+    const now = new Date(), pad = n => String(n).padStart(2, "0");
+    document.getElementById("trDate").value =
+        `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    document.getElementById("trDirection").value = "买入";
+    document.getElementById("trName").value = "";
+    document.getElementById("trCode").value = "";
+    document.getElementById("trQty").value = "";
+    document.getElementById("trPrice").value = "";
+    document.getElementById("trFee").value = "0";
+    document.getElementById("trAccount").value = "A股主账户";
+    document.getElementById("trNote").value = "";
+    document.getElementById("trSync").checked = true;
+    document.getElementById("trError").style.display = "none";
+    invalidateTradePreview();
+    document.getElementById("tradeModal").classList.add("show");
+    setTimeout(() => document.getElementById("trName").focus(), 100);
+}
+
+function hideTradeModal() {
+    document.getElementById("tradeModal").classList.remove("show");
+    tradePreview = null;
+}
+
+function onTradeNameChange() {
+    const name = document.getElementById("trName").value.trim();
+    const stocks = (state.data && state.data.stocks) || [];
+    const s = stocks.find(x => x.name === name);
+    if (s) {
+        document.getElementById("trCode").value = s.code || "";
+        if (s.account) document.getElementById("trAccount").value = s.account;
+    }
+    invalidateTradePreview();
+}
+
+function onTradeDirectionChange() { invalidateTradePreview(); }
+
+function invalidateTradePreview() {
+    tradePreview = null;
+    const box = document.getElementById("trPreview");
+    box.style.display = "none";
+    box.innerHTML = "";
+    document.getElementById("trConfirmBtn").disabled = true;
+}
+
+function tradeFormData() {
+    const raw = document.getElementById("trDate").value;
+    return {
+        date: raw ? raw.replace("T", " ") : "",
+        direction: document.getElementById("trDirection").value,
+        name: document.getElementById("trName").value.trim(),
+        code: document.getElementById("trCode").value.trim(),
+        qty: parseFloat(document.getElementById("trQty").value || 0),
+        price: parseFloat(document.getElementById("trPrice").value || 0),
+        fee: parseFloat(document.getElementById("trFee").value || 0),
+        account: document.getElementById("trAccount").value,
+        note: document.getElementById("trNote").value.trim(),
+        sync: document.getElementById("trSync").checked,
+    };
+}
+
+function showTradeError(msg) {
+    const el = document.getElementById("trError");
+    el.textContent = msg;
+    el.style.display = "block";
+}
+
+function renderTradePreview(p, data) {
+    const box = document.getElementById("trPreview");
+    const money = v => Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+    const rows = [];
+    rows.push(`<div><b>${p.direction} ${escapeHtml(p.name)}</b> ${money(p.qty)} 股 @ ${Number(p.price).toFixed(3)}，成交额 ${money(p.amount)}${p.fee ? `，费用 ${money(p.fee)}` : ""}</div>`);
+    if (p.direction === "卖出") {
+        rows.push(`<div>本笔实现盈亏（真实成本 ${Number(p.ledger_cost_before).toFixed(3)}）：<b style="color:${p.realized >= 0 ? "#CC0000" : "#009900"}">${p.realized >= 0 ? "+" : ""}${money(p.realized)}</b></div>`);
+    }
+    if (data.sync && p.can_sync) {
+        rows.push(`<div>持仓：${money(p.qty_before)} → ${money(p.qty_after)} 股；摊薄成本 ${Number(p.cost_before).toFixed(3)} → ${Number(p.cost_after).toFixed(3)}</div>`);
+        rows.push(`<div>现金（${escapeHtml(p.account)}）：${money(p.cash_before)} → ${money(p.cash_after)}</div>`);
+    } else {
+        rows.push("<div>只记录流水，不改持仓和现金</div>");
+    }
+    (p.warnings || []).forEach(w => rows.push(`<div class="warn">⚠️ ${escapeHtml(w)}</div>`));
+    box.innerHTML = rows.join("");
+    box.style.display = "block";
+}
+
+async function previewTrade() {
+    document.getElementById("trError").style.display = "none";
+    const data = tradeFormData();
+    try {
+        const res = await fetch("/api/transactions", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...data, action: "preview" }),
+        });
+        const r = await res.json();
+        if (!r.success || !r.preview) { showTradeError(r.error || "预览失败"); return; }
+        tradePreview = data;
+        renderTradePreview(r.preview, data);
+        document.getElementById("trConfirmBtn").disabled = false;
+    } catch (e) {
+        showTradeError("预览失败：" + e.message);
+    }
+}
+
+async function confirmTrade() {
+    if (!tradePreview) { await previewTrade(); if (!tradePreview) return; }
+    const data = tradeFormData();
+    if (data.sync && !editHoldingsUnlocked) {
+        pwdPendingAction = confirmTrade;
+        document.getElementById("pwdModal").classList.add("show");
+        document.getElementById("pwdInput").value = "";
+        document.getElementById("pwdError").style.display = "none";
+        setTimeout(() => document.getElementById("pwdInput").focus(), 100);
+        return;
+    }
+    const btn = document.getElementById("trConfirmBtn");
+    btn.disabled = true; btn.textContent = "保存中…";
+    try {
+        const res = await fetch("/api/transactions", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...data, action: "create" }),
+        });
+        const r = await res.json();
+        if (!r.success) { showTradeError(r.error || "保存失败"); return; }
+        hideTradeModal();
+        loadData();
+        if (state.insights) loadToday();
+        alert(`已记录：${data.direction} ${data.name} ${data.qty} 股` + (r.synced ? "，持仓和现金已更新" : "（仅记流水）"));
+    } catch (e) {
+        showTradeError("保存失败：" + e.message);
+    } finally {
+        btn.textContent = "确认保存";
+        btn.disabled = false;
+    }
+}
+
+async function loadTransactions() {
+    const metrics = document.getElementById("txnMetrics");
+    if (metrics) metrics.innerHTML = '<div style="font-size:12px;color:#999;">加载中…</div>';
+    try {
+        const r = await fetch("/api/transactions");
+        renderTransactions(await r.json());
+    } catch (e) {
+        if (metrics) metrics.innerHTML = '<div style="font-size:12px;color:#CC0000;">加载失败</div>';
+    }
+}
+
+function renderTransactions(d) {
+    const s = d.summary || {};
+    const money = v => Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+    const pnlColor = v => v >= 0 ? "#CC0000" : "#009900";
+    const tiles = [
+        { label: "已记录", value: `${s.trade_count || 0} 笔`, sub: `已平仓 ${s.sell_count || 0} 笔`, color: "#2F5496" },
+        { label: "胜率", value: s.win_rate === null || s.win_rate === undefined ? "--" : `${s.win_rate}%`, sub: "只统计卖出", color: "#2F5496" },
+        { label: "实现盈亏", value: s.realized === undefined ? "--" : `${s.realized >= 0 ? "+" : ""}${money(s.realized)}`, sub: "按真实成本", color: pnlColor(s.realized || 0) },
+        { label: "盈亏比", value: s.profit_factor === null || s.profit_factor === undefined ? "--" : s.profit_factor, sub: `均赚 ${s.avg_win ?? "--"} / 均亏 ${s.avg_loss ?? "--"}`, color: "#2F5496" },
+    ];
+    document.getElementById("txnMetrics").innerHTML = tiles.map(t =>
+        `<div class="metric-tile"><div class="label">${t.label}</div><div class="value" style="color:${t.color}">${t.value}</div><div class="sub">${escapeHtml(String(t.sub))}</div></div>`).join("");
+
+    const by = d.by_stock || [];
+    document.getElementById("txnByStockEmpty").style.display = by.length ? "none" : "block";
+    document.getElementById("txnByStockBody").innerHTML = by.map(x => `<tr>
+        <td style="font-weight:500;">${escapeHtml(x.name)}</td>
+        <td class="num">${money(x.buy_amount)}</td>
+        <td class="num">${money(x.sell_amount)}</td>
+        <td class="num" style="font-weight:600;color:${pnlColor(x.realized)}">${x.realized >= 0 ? "+" : ""}${money(x.realized)}</td>
+        <td class="num">${x.buy_count + x.sell_count}</td>
+    </tr>`).join("");
+
+    const rows = d.transactions || [];
+    document.getElementById("txnEmpty").style.display = rows.length ? "none" : "block";
+    document.getElementById("txnBody").innerHTML = rows.map(t => {
+        const pnl = t.realized;
+        const pnlHtml = pnl === null || pnl === undefined ? "-" :
+            `<span style="color:${pnlColor(pnl)};font-weight:600;">${pnl >= 0 ? "+" : ""}${money(pnl)}</span>`;
+        return `<tr>
+            <td style="font-size:11px;color:#888;">${escapeHtml((t.date || "").slice(0, 16))}</td>
+            <td>${escapeHtml(t.name)}</td>
+            <td>${escapeHtml(t.direction)}</td>
+            <td class="num">${money(t.qty)}</td>
+            <td class="num">${Number(t.price).toFixed(3)}</td>
+            <td class="num">${pnlHtml}</td>
+        </tr>`;
+    }).join("");
 }
 
 // ============ 初始化 ============

@@ -23,7 +23,7 @@ from openpyxl.utils import get_column_letter
 
 # ============ 配置 ============
 DATA_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
-EXCEL_PATH = DATA_DIR / "portfolio.xlsx"
+EXCEL_PATH = Path(os.environ.get("PORTFOLIO_XLSX", DATA_DIR / "portfolio.xlsx"))
 
 # A股代码映射（名称 → 代码）
 STOCK_CODES = {
@@ -689,6 +689,308 @@ def get_cleared_positions():
 
 
 # ============ 出入金记录 ============
+# ============ 交易流水 ============
+TRANSACTION_SHEET = "交易流水"
+TRANSACTION_HEADERS = ["日期", "方向", "资产类别", "资产名称", "代码", "成交数量",
+                       "成交价格", "成交金额", "账户", "备注", "费用", "实现盈亏",
+                       "成本价(复盘)", "结存数量", "结存成本"]
+
+
+def _transaction_sheet(wb, create=True):
+    if TRANSACTION_SHEET not in wb.sheetnames:
+        if not create:
+            return None
+        ws = wb.create_sheet(TRANSACTION_SHEET)
+        ws.append(TRANSACTION_HEADERS)
+        for col, width in {"A": 18, "B": 8, "C": 10, "D": 14, "E": 10, "F": 10,
+                           "G": 10, "H": 12, "I": 16, "J": 20, "K": 8, "L": 12,
+                           "M": 14, "N": 10, "O": 12}.items():
+            ws.column_dimensions[col].width = width
+        return ws
+    ws = wb[TRANSACTION_SHEET]
+    for rng in list(ws.merged_cells.ranges):
+        ws.unmerge_cells(str(rng))
+    if ws.max_row == 0 or ws.cell(1, 1).value != TRANSACTION_HEADERS[0]:
+        ws.insert_rows(1)
+    for i, h in enumerate(TRANSACTION_HEADERS, 1):
+        if not ws.cell(1, i).value:
+            ws.cell(1, i, h)
+    return ws
+
+
+def _fmt_tx_date(v):
+    if v is None:
+        return ""
+    if isinstance(v, datetime):
+        return v.strftime("%Y-%m-%d %H:%M")
+    return str(v).strip()
+
+
+def load_transactions():
+    if not EXCEL_PATH.exists():
+        return []
+    wb = openpyxl.load_workbook(EXCEL_PATH, data_only=True)
+    ws = _transaction_sheet(wb, create=False)
+    if ws is None:
+        wb.close()
+        return []
+    result = []
+    for row_num, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+        date = _fmt_tx_date(row[0] if row else None)
+        if not date or date.startswith("（"):
+            continue
+
+        def val(i):
+            return row[i] if i < len(row) else None
+
+        def num(i):
+            v = val(i)
+            return float(v) if isinstance(v, (int, float)) else 0.0
+
+        result.append({
+            "row": row_num,
+            "date": date,
+            "direction": val(1) or "",
+            "category": val(2) or "",
+            "name": val(3) or "",
+            "code": str(val(4) or ""),
+            "qty": num(5),
+            "price": num(6),
+            "amount": num(7),
+            "account": val(8) or "",
+            "note": val(9) or "",
+            "fee": num(10),
+            "realized": float(val(11)) if isinstance(val(11), (int, float)) else None,
+            "basis": float(val(12)) if isinstance(val(12), (int, float)) else None,
+            "ledger_qty": float(val(13)) if isinstance(val(13), (int, float)) else None,
+            "ledger_cost": float(val(14)) if isinstance(val(14), (int, float)) else None,
+        })
+    wb.close()
+    return result
+
+
+def _ledger_state(name, account, fallback_qty, fallback_cost):
+    """复盘用的真实成本：按流水滚动，不采用持仓的摊薄成本"""
+    txns = load_transactions()
+    qty, cost = fallback_qty, fallback_cost
+    found = False
+    for t in txns:
+        if t["name"] != name:
+            continue
+        if account and t["account"] != account:
+            continue
+        if t["ledger_qty"] is not None and t["ledger_cost"] is not None:
+            qty, cost, found = t["ledger_qty"], t["ledger_cost"], True
+    return qty, cost, found
+
+
+def preview_transaction(data):
+    direction = str(data.get("direction", "")).strip()
+    if direction not in ("买入", "卖出"):
+        raise ValueError("方向必须是买入或卖出")
+    name = str(data.get("name", "")).strip()
+    if not name:
+        raise ValueError("请填写资产名称")
+    try:
+        qty = float(data.get("qty") or 0)
+        price = float(data.get("price") or 0)
+        fee = float(data.get("fee") or 0)
+    except (TypeError, ValueError):
+        raise ValueError("数量、价格和费用必须是数字")
+    if qty <= 0 or price <= 0:
+        raise ValueError("数量和成交价必须大于 0")
+    if fee < 0:
+        raise ValueError("费用不能为负数")
+
+    account = str(data.get("account", "")).strip()
+    holdings = load_portfolio()
+    holding = None
+    for h in holdings:
+        if h["类别"] != "现金" and h["名称"] == name and (not account or h["账户"] == account):
+            holding = h
+            break
+    if holding is None:
+        for h in holdings:
+            if h["类别"] != "现金" and h["名称"] == name:
+                holding = h
+                break
+
+    category = holding["类别"] if holding else (data.get("category") or "股票")
+    if not account:
+        account = holding["账户"] if holding else "A股主账户"
+    code = str(data.get("code") or (holding["代码"] if holding else ""))
+    qty_before = holding["数量"] if holding else 0
+    cost_before = holding["成本价"] if holding else 0
+    if direction == "卖出" and data.get("cost"):
+        cost_before = float(data.get("cost"))
+    cash = next((h for h in holdings if h["类别"] == "现金" and h["账户"] == account), None)
+    cash_before = cash["数量"] if cash else 0
+    amount = round(qty * price, 2)
+    warnings = []
+    ledger_qty, ledger_cost, has_ledger = _ledger_state(name, account, qty_before, cost_before)
+    if direction == "卖出" and data.get("cost") and not has_ledger:
+        ledger_cost = float(data.get("cost"))
+
+    realized = None
+    realized_holdings = None
+    if direction == "买入":
+        new_qty = qty_before + qty
+        new_cost = round((qty_before * cost_before + amount + fee) / new_qty, 3)
+        new_ledger_qty = ledger_qty + qty
+        new_ledger_cost = round((ledger_qty * ledger_cost + amount + fee) / new_ledger_qty, 3)
+        cash_after = round(cash_before - amount - fee, 2)
+    else:
+        if qty_before <= 0 and not data.get("cost"):
+            raise ValueError(f"{name} 当前持仓为 0，无法卖出；请在编辑持仓里确认，或填写成本价")
+        if qty > qty_before + 1e-6 and qty_before > 0:
+            raise ValueError(f"卖出数量 {qty:g} 超过当前持仓 {qty_before:g}")
+        if has_ledger and qty > ledger_qty + 1e-6:
+            warnings.append(f"流水结存只有 {ledger_qty:g} 股，可能有交易漏记")
+        remaining = qty_before - qty
+        realized = round((price - ledger_cost) * qty - fee, 2)
+        realized_holdings = round((price - cost_before) * qty - fee, 2)
+        cash_after = round(cash_before + amount - fee, 2)
+        if remaining <= 1e-6:
+            new_qty, new_cost = 0, cost_before
+        else:
+            new_qty = remaining
+            new_cost = round((qty_before * cost_before - amount + fee) / remaining, 3)
+        new_ledger_qty = max(0.0, round(ledger_qty - qty, 4))
+        new_ledger_cost = round(ledger_cost, 3) if new_ledger_qty > 0 else 0
+
+    if cash_after < 0:
+        warnings.append(f"现金将变为负数（{cash_after:,.2f}）")
+    if category == "黄金":
+        warnings.append("黄金交易暂不自动同步持仓，请另行更新克数和出入金")
+    can_sync = category != "黄金"
+    if direction == "卖出" and qty_before <= 0:
+        can_sync = False
+        warnings.append("当前持仓为 0，这笔只记流水，不会改持仓和现金")
+
+    return {
+        "direction": direction, "name": name, "code": code, "category": category,
+        "account": account, "qty": qty, "price": price, "fee": fee, "amount": amount,
+        "qty_before": qty_before, "cost_before": round(cost_before, 3),
+        "qty_after": round(new_qty, 4), "cost_after": round(new_cost, 3),
+        "cash_before": round(cash_before, 2), "cash_after": cash_after,
+        "realized": realized, "realized_holdings": realized_holdings, "warnings": warnings,
+        "ledger_qty_before": round(ledger_qty, 4), "ledger_cost_before": round(ledger_cost, 3),
+        "ledger_qty_after": new_ledger_qty, "ledger_cost_after": new_ledger_cost,
+        "can_sync": can_sync,
+    }
+
+
+def record_transaction(data):
+    preview = preview_transaction(data)
+    sync = bool(data.get("sync", True)) and preview["can_sync"]
+    date = str(data.get("date") or datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M")).strip()
+
+    wb = openpyxl.load_workbook(EXCEL_PATH)
+    ws = _transaction_sheet(wb)
+    for row_num in range(ws.max_row, 1, -1):
+        value = ws.cell(row_num, 1).value
+        if isinstance(value, str) and value.startswith("（"):
+            ws.delete_rows(row_num)
+    ws.append([
+        date, preview["direction"], preview["category"], preview["name"], preview["code"],
+        preview["qty"], preview["price"], preview["amount"], preview["account"],
+        data.get("note", ""), preview["fee"],
+        preview["realized"] if preview["direction"] == "卖出" else None,
+        preview["ledger_cost_before"],
+        preview["ledger_qty_after"],
+        preview["ledger_cost_after"],
+    ])
+    wb.save(EXCEL_PATH)
+    wb.close()
+
+    if not sync:
+        return {"success": True, "synced": False, "preview": preview, "date": date}
+
+    holdings = load_portfolio()
+    rows = []
+    cash_written = False
+    for h in holdings:
+        item = {
+            "类别": h["类别"], "账户": h["账户"], "名称": h["名称"], "代码": h["代码"],
+            "数量": h["数量"], "成本价": h["成本价"], "现价": h["现价"], "备注": h["备注"],
+        }
+        if h["类别"] == "现金" and h["账户"] == preview["account"]:
+            item["数量"] = preview["cash_after"]
+            item["市值"] = preview["cash_after"]
+            cash_written = True
+        elif h["类别"] != "现金" and h["名称"] == preview["name"] and h["账户"] == preview["account"]:
+            item["数量"] = preview["qty_after"]
+            item["成本价"] = preview["cost_after"]
+            if preview["qty_after"] <= 0:
+                item["现价"] = preview["price"]
+        rows.append(item)
+
+    if not cash_written:
+        rows.append({
+            "类别": "现金", "账户": preview["account"], "名称": "可用资金", "代码": "",
+            "数量": preview["cash_after"], "成本价": 0, "现价": 0,
+            "市值": preview["cash_after"], "备注": "",
+        })
+    if preview["direction"] == "买入" and not any(
+            r["类别"] != "现金" and r["名称"] == preview["name"] and r["账户"] == preview["account"] for r in rows):
+        rows.append({
+            "类别": preview["category"], "账户": preview["account"], "名称": preview["name"],
+            "代码": preview["code"], "数量": preview["qty_after"], "成本价": preview["cost_after"],
+            "现价": preview["price"], "备注": "",
+        })
+
+    save_holdings(rows)
+    if preview["direction"] == "卖出" and preview["qty_after"] <= 0:
+        record_realized_pnl(preview["name"], qty=preview["qty"], price=preview["price"],
+                            cost=preview["cost_before"], action="清仓",
+                            amount=preview["realized_holdings"], date=date)
+    return {"success": True, "synced": True, "preview": preview, "date": date}
+
+
+def transaction_review():
+    txns = load_transactions()
+    sells = [t for t in txns if t["direction"] == "卖出" and t["realized"] is not None]
+    wins = [t for t in sells if t["realized"] > 0]
+    losses = [t for t in sells if t["realized"] < 0]
+    realized = round(sum(t["realized"] for t in sells), 2)
+    gross_win = round(sum(t["realized"] for t in wins), 2)
+    gross_loss = round(abs(sum(t["realized"] for t in losses)), 2)
+
+    by_stock = {}
+    for t in txns:
+        item = by_stock.setdefault(t["name"], {
+            "name": t["name"], "buy_amount": 0, "sell_amount": 0,
+            "realized": 0, "buy_count": 0, "sell_count": 0,
+        })
+        if t["direction"] == "买入":
+            item["buy_amount"] += t["amount"] + t["fee"]
+            item["buy_count"] += 1
+        else:
+            item["sell_amount"] += t["amount"] - t["fee"]
+            item["sell_count"] += 1
+            if t["realized"] is not None:
+                item["realized"] += t["realized"]
+
+    summary = {
+        "trade_count": len(txns),
+        "sell_count": len(sells),
+        "realized": realized,
+        "win_rate": round(len(wins) / len(sells) * 100, 1) if sells else None,
+        "avg_win": round(gross_win / len(wins), 2) if wins else None,
+        "avg_loss": round(-gross_loss / len(losses), 2) if losses else None,
+        "profit_factor": round(gross_win / gross_loss, 2) if gross_loss > 0 else None,
+    }
+    for item in by_stock.values():
+        item["buy_amount"] = round(item["buy_amount"], 2)
+        item["sell_amount"] = round(item["sell_amount"], 2)
+        item["realized"] = round(item["realized"], 2)
+    return {
+        "transactions": list(reversed(txns)),
+        "summary": summary,
+        "by_stock": sorted(by_stock.values(), key=lambda x: abs(x["realized"]), reverse=True),
+    }
+
+
 def add_capital_flow(amount, flow_type, note=""):
     """记录一笔出入金
     flow_type: "存入" or "取出"

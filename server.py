@@ -1179,6 +1179,12 @@ class PortfolioHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
+        elif path == "/api/transactions":
+            try:
+                self._send_json(agent.transaction_review())
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
         elif path == "/api/insights":
             try:
                 self._send_json(api_insights())
@@ -1390,6 +1396,18 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                     self._send_json({"success": True})
             except Exception as e:
                 self._send_json({"success": False, "error": str(e)}, 500)
+
+        elif path == "/api/transactions":
+            try:
+                if data.get("action") == "preview":
+                    self._send_json({"success": True, "preview": agent.preview_transaction(data)})
+                else:
+                    result = agent.record_transaction(data)
+                    result.update(agent.transaction_review())
+                    agent.sync_portfolio_to_github()
+                    self._send_json(result)
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)}, 400)
 
         elif path == "/api/briefing":
             try:
