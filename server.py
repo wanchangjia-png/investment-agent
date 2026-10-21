@@ -20,6 +20,7 @@ from pathlib import Path
 # 确保能找到同目录模块
 sys.path.insert(0, str(Path(__file__).parent))
 import portfolio_agent as agent
+import insights
 
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", os.environ.get("RAILWAY_PORT", 5050)))
@@ -842,6 +843,232 @@ def api_add_position_advice(data):
         return {"error": f"AI 分析失败: {str(e)}", "stock_name": stock_name}
 
 
+# ============ 深度诊断 / 晨报 / 决策 ============
+
+def _today_stocks():
+    """当前持仓 + 今日涨跌，用于生成提醒"""
+    holdings = agent.load_portfolio()
+    prev_closes = _fetch_prev_closes()
+    yesterday_qty = agent.load_yesterday_qty_map()
+    out = []
+    for h in holdings:
+        if h["类别"] != "股票":
+            continue
+        qty = h["数量"] or 0
+        if qty == 0:
+            continue
+        price = h["现价"] or 0
+        prev_close = prev_closes.get(h["名称"], 0)
+        yq = yesterday_qty.get(h["名称"])
+        if yq is not None and yq == 0:
+            today_pnl = round((price - h["成本价"]) * qty, 2)
+        else:
+            today_pnl = round((price - prev_close) * qty, 2) if prev_close > 0 else 0
+        out.append({
+            "name": h["名称"], "price": price, "cost": h["成本价"], "qty": qty,
+            "return_pct": round((h["收益率"] or 0) * 100, 2),
+            "today_pnl": today_pnl,
+        })
+    return out
+
+
+def api_insights():
+    holdings = agent.load_portfolio()
+    total_value, total_pnl, _ = agent.calculate(holdings)
+    snap = insights.snapshot(_today_stocks())
+    snap["portfolio"] = {
+        "total_value": round(total_value, 2),
+        "total_pnl": round(total_pnl, 2),
+        "true_pnl": round(total_value - agent.get_net_capital()[0], 2),
+        "net_capital": round(agent.get_net_capital()[0], 2),
+    }
+    return snap
+
+
+BRIEFING_HEADERS = ["日期", "生成时间", "内容", "来源"]
+
+
+def _briefing_sheet(wb):
+    if "晨报" in wb.sheetnames:
+        return wb["晨报"]
+    ws = wb.create_sheet("晨报")
+    ws.append(BRIEFING_HEADERS)
+    ws.column_dimensions["A"].width = 12
+    ws.column_dimensions["B"].width = 18
+    ws.column_dimensions["C"].width = 100
+    ws.column_dimensions["D"].width = 10
+    return ws
+
+
+def _load_briefing(day):
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(agent.EXCEL_PATH)
+        if "晨报" not in wb.sheetnames:
+            wb.close()
+            return None
+        ws = wb["晨报"]
+        found = None
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[0] and str(row[0]) == day:
+                found = {"date": str(row[0]), "time": str(row[1] or ""),
+                         "content": row[2] or "", "source": row[3] or ""}
+        wb.close()
+        return found
+    except Exception as e:
+        print(f"⚠️ 读取晨报失败: {e}")
+        return None
+
+
+def _save_briefing(day, content, source):
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(agent.EXCEL_PATH)
+        ws = _briefing_sheet(wb)
+        ws.append([day, datetime.now().strftime("%Y-%m-%d %H:%M"), content, source])
+        wb.save(agent.EXCEL_PATH)
+        wb.close()
+        return True
+    except Exception as e:
+        print(f"⚠️ 保存晨报失败: {e}")
+        return False
+
+
+def _rule_briefing(snap):
+    """不依赖 AI 的兜底晨报"""
+    p = snap.get("performance", {}).get("metrics", {})
+    pf = snap.get("portfolio", {})
+    day = datetime.now().strftime("%m月%d日")
+    lines = [f"☀️ {day} 持仓晨报", ""]
+    lines.append(f"总资产 {pf.get('total_value', 0):,.0f} 元，累计盈亏 {pf.get('total_pnl', 0):+,.0f} 元。")
+    if p:
+        lines.append(
+            f"自 {p.get('start_date', '')} 以来账户 {p.get('account_return', 0):+.1f}%，"
+            f"沪深300 {p.get('benchmark_return', 0):+.1f}%（超额 {p.get('excess_return', 0):+.1f}pp）；"
+            f"最大回撤 {p.get('max_drawdown', 0):.1f}%。"
+        )
+    alerts = snap.get("alerts") or []
+    if alerts:
+        lines.append("")
+        lines.append("今日关注：")
+        for a in alerts[:5]:
+            lines.append(f"· {a['name']}：{a['text']}")
+    risk_rows = snap.get("risks") or []
+    if risk_rows:
+        lines.append("")
+        lines.append("待处理风险：")
+        for r in risk_rows[:4]:
+            lines.append(f"· [{r['level']}] {r['title']}：{r['detail']}")
+    lines.append("")
+    lines.append("行动清单：")
+    for a in (snap.get("actions") or [])[:4]:
+        lines.append(f"· [{a['priority']}] {a['action']}")
+    return "\n".join(lines)
+
+
+def _call_llm_text(system_prompt, user_prompt, max_tokens=900, temperature=0.4):
+    api_key = LLM_CONFIG["api_key"]
+    if not api_key:
+        return None
+    endpoint = LLM_ENDPOINTS.get(LLM_CONFIG["provider"], LLM_ENDPOINTS["deepseek"])
+    body = json.dumps({
+        "model": LLM_CONFIG["model"],
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "stream": False,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        endpoint, data=body,
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        method="POST",
+    )
+    try:
+        resp = urllib.request.urlopen(req, timeout=60)
+        data = json.loads(resp.read().decode("utf-8"))
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        print(f"⚠️ 晨报 AI 生成失败: {e}")
+        return None
+
+
+def _ai_briefing(snap):
+    p = snap.get("performance", {}).get("metrics", {})
+    pf = snap.get("portfolio", {})
+    exp = snap.get("exposure", {})
+    attr = snap.get("attribution", {}).get("items", [])
+    holdings = agent.load_portfolio()
+    stocks = [h for h in holdings if h["类别"] == "股票" and (h["数量"] or 0) > 0]
+
+    lines = []
+    for h in stocks:
+        lines.append(
+            f"- {h['名称']} {h['数量']}股 现价{h['现价']:.2f} 成本{h['成本价']:.2f} "
+            f"浮亏{(h['收益率'] or 0)*100:.1f}% 占总资产{(h['市值']/pf.get('total_value', 1)*100):.1f}%"
+        )
+    context = f"""## 账户
+总资产 {pf.get('total_value', 0):,.0f} 元；累计盈亏 {pf.get('total_pnl', 0):+,.0f} 元；净投入本金 {pf.get('net_capital', 0):,.0f} 元。
+现金占总资产 {exp.get('cash_pct', 0):.1f}%；前三大持仓合计 {exp.get('top3_pct', 0):.1f}%。
+区间（{p.get('start_date', '')} 起）账户收益 {p.get('account_return', 0):+.1f}%，沪深300 {p.get('benchmark_return', 0):+.1f}%，超额 {p.get('excess_return', 0):+.1f}pp；最大回撤 {p.get('max_drawdown', 0):.1f}%；年化波动 {p.get('volatility', 0):.1f}%。
+
+## 持仓
+{chr(10).join(lines)}
+
+## 盈亏归因（负 contribution 是拖累）
+{chr(10).join(f"- {x['name']}：{x['pnl']:+,.0f} 元，占亏损 {x['share']:.0f}%" for x in attr[:6])}
+
+## 今日异动
+{chr(10).join(f"- {a['name']}：{a['text']}" for a in (snap.get('alerts') or [])[:6]) or '- 无异动'}
+
+## 系统识别风险
+{chr(10).join(f"- [{r['level']}] {r['title']}：{r['detail']} 建议：{r['action']}" for r in (snap.get('risks') or [])) or '- 无'}
+"""
+    system = """你是万万的专属 A 股投资助手，风格克制、专业、说人话。
+写一份每日盘前晨报，要求：
+1. 开头一句话给结论（今天该守还是该动）
+2. 「持仓速览」2-3 条，指出最需要关注的持仓变化
+3. 「今日关注」2-3 条，结合异动和风险，给出具体价位（能算就算）
+4. 「操作清单」最多 3 条，每条必须可执行，含标的、方向、股数或金额、触发价
+5. 不吹不黑，不承诺收益；数据不足就说不确定
+总长度 400-600 字，用 Markdown 的 ### 小标题和 - 列表，不要用表格。"""
+    return _call_llm_text(system, context, max_tokens=1100, temperature=0.4)
+
+
+def api_briefing(force=False):
+    day = datetime.now().strftime("%Y-%m-%d")
+    cached = _load_briefing(day)
+    if cached and cached.get("content") and not force:
+        return {"briefing": cached, "cached": True, "snapshot": None}
+    snap = api_insights()
+    rule_text = _rule_briefing(snap)
+    ai_text = _ai_briefing(snap)
+    if ai_text:
+        _save_briefing(day, ai_text, "AI")
+        return {"briefing": {"date": day, "time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                             "content": ai_text, "source": "AI"},
+                "cached": False, "snapshot": snap}
+    _save_briefing(day, rule_text, "规则")
+    return {"briefing": {"date": day, "time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                         "content": rule_text, "source": "规则"},
+            "cached": False, "snapshot": snap}
+
+
+def api_decisions():
+    rows = insights.load_decisions()
+    price_map = {h["名称"]: h["现价"] for h in agent.load_portfolio()}
+    for r in rows:
+        cur = price_map.get(r["name"])
+        r["current_price"] = cur
+        if cur and r["price"]:
+            r["since_pct"] = round((cur / r["price"] - 1) * 100, 2)
+        else:
+            r["since_pct"] = None
+    return {"decisions": rows}
+
+
 # ============ HTTP 服务器 ============
 
 class PortfolioHandler(BaseHTTPRequestHandler):
@@ -888,43 +1115,44 @@ class PortfolioHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path == "/" or self.path == "/index.html":
+        path = urllib.parse.urlparse(self.path).path
+        if path == "/" or path == "/index.html":
             self._send_html(self._read_html())
 
-        elif self.path.startswith("/static/"):
-            self._send_static(self.path[len("/static/"):])
+        elif path.startswith("/static/"):
+            self._send_static(path[len("/static/"):])
 
-        elif self.path == "/api/data":
+        elif path == "/api/data":
             try:
                 self._send_json(api_data())
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
-        elif self.path == "/api/refresh":
+        elif path == "/api/refresh":
             try:
                 self._send_json(api_refresh())
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
-        elif self.path == "/api/advice":
+        elif path == "/api/advice":
             try:
                 self._send_json(api_advice())
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
-        elif self.path == "/api/breakeven":
+        elif path == "/api/breakeven":
             try:
                 self._send_json(api_breakeven())
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
-        elif self.path == "/api/kline":
+        elif path == "/api/kline":
             try:
                 self._send_json(api_kline())
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
-        elif self.path == "/api/capital-flows":
+        elif path == "/api/capital-flows":
             try:
                 flows = agent.load_capital_flows()
                 net, cnt = agent.get_net_capital()
@@ -932,7 +1160,7 @@ class PortfolioHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
-        elif self.path == "/api/config":
+        elif path == "/api/config":
             self._send_json({
                 "provider": LLM_CONFIG["provider"],
                 "model": LLM_CONFIG["model"],
@@ -940,7 +1168,7 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                 "key_prefix": LLM_CONFIG["api_key"][:8] + "..." if LLM_CONFIG["api_key"] else "",
             })
 
-        elif self.path == "/api/realized-pnl":
+        elif path == "/api/realized-pnl":
             try:
                 records = agent.get_realized_pnl_records()
                 total = agent.get_realized_pnl_total()
@@ -948,10 +1176,28 @@ class PortfolioHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
-        elif self.path == "/api/edit-history":
+        elif path == "/api/edit-history":
             try:
                 logs = agent.load_edit_log()
                 self._send_json({"logs": logs})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif path == "/api/insights":
+            try:
+                self._send_json(api_insights())
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif path == "/api/briefing":
+            try:
+                self._send_json(api_briefing())
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif path == "/api/decisions":
+            try:
+                self._send_json(api_decisions())
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
@@ -959,11 +1205,12 @@ class PortfolioHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "not found"}, 404)
 
     def do_POST(self):
+        path = urllib.parse.urlparse(self.path).path
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length) if content_length > 0 else b"{}"
         data = json.loads(body) if body else {}
 
-        if self.path == "/api/chat":
+        if path == "/api/chat":
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-cache")
@@ -1004,7 +1251,7 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
 
-        elif self.path == "/api/save-config":
+        elif path == "/api/save-config":
             key = data.get("key", "")
             value = data.get("value", "")
             if key == "api_key":
@@ -1018,7 +1265,7 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                 save_config_sheet("model", value)
             self._send_json({"success": True})
 
-        elif self.path == "/api/capital-flow":
+        elif path == "/api/capital-flow":
             try:
                 action = data.get("action", "create")
                 if action == "update":
@@ -1058,7 +1305,7 @@ class PortfolioHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"success": False, "error": str(e)}, 500)
 
-        elif self.path == "/api/capital-flows":
+        elif path == "/api/capital-flows":
             try:
                 flows = agent.load_capital_flows()
                 net, cnt = agent.get_net_capital()
@@ -1066,14 +1313,14 @@ class PortfolioHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
-        elif self.path == "/api/add-position-advice":
+        elif path == "/api/add-position-advice":
             try:
                 result = api_add_position_advice(data)
                 self._send_json(result)
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
-        elif self.path == "/api/holdings-save":
+        elif path == "/api/holdings-save":
             try:
                 holdings_data = data.get("holdings", [])
                 result = agent.save_holdings(holdings_data)
@@ -1087,14 +1334,14 @@ class PortfolioHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"success": False, "error": str(e)}, 500)
 
-        elif self.path == "/api/breakeven-realistic":
+        elif path == "/api/breakeven-realistic":
             try:
                 result = api_breakeven_realistic(data)
                 self._send_json(result)
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
-        elif self.path == "/api/realized-pnl":
+        elif path == "/api/realized-pnl":
             try:
                 action = data.get("action", "create")
                 if action == "update":
@@ -1145,6 +1392,32 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                     )
                     agent.sync_portfolio_to_github()
                     self._send_json({"success": True})
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)}, 500)
+
+        elif path == "/api/briefing":
+            try:
+                self._send_json(api_briefing(force=bool(data.get("force"))))
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif path == "/api/decisions":
+            try:
+                action = data.get("action", "create")
+                if action == "update":
+                    ok = insights.update_decision(int(data["row"]),
+                                                  status=data.get("status"),
+                                                  review=data.get("review"))
+                elif action == "delete":
+                    ok = insights.delete_decision(int(data["row"]))
+                else:
+                    if not str(data.get("name", "")).strip():
+                        self._send_json({"success": False, "error": "请填写标的"})
+                        return
+                    ok = insights.add_decision(data)
+                if ok:
+                    agent.sync_portfolio_to_github()
+                self._send_json({"success": ok, **api_decisions()})
             except Exception as e:
                 self._send_json({"success": False, "error": str(e)}, 500)
 

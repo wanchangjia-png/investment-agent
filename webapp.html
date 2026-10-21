@@ -19,7 +19,7 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .header .time { font-size: 12px; color: #888; }
 .header-actions { display: flex; gap: 8px; align-items: center; }
 
-.btn { padding: 7px 16px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 500; transition: all 0.2s; }
+.btn { padding: 7px 16px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 500; transition: all 0.2s; white-space: nowrap; }
 .btn-primary { background: #2F5496; color: #fff; }
 .btn-primary:hover { background: #1a3a6c; }
 .btn-primary:disabled { background: #999; cursor: not-allowed; }
@@ -126,6 +126,66 @@ tr:hover { background: #f8f9ff; }
 .advice-box { font-size: 13px; line-height: 1.7; white-space: pre-wrap; max-height: 400px; overflow-y: auto;
     font-family: "PingFang SC", monospace; }
 
+/* ===== 今日 / 诊断 / 决策 ===== */
+.metric-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-bottom: 14px; }
+.metric-tile { background: #f8f9ff; border: 1px solid #e8ecf5; border-radius: 10px; padding: 10px 12px; }
+.metric-tile .label { font-size: 11px; color: #888; }
+.metric-tile .value { font-size: 17px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.metric-tile .sub { font-size: 11px; color: #999; margin-top: 2px; }
+
+.brief-card { background: linear-gradient(135deg, #f7f9ff, #eef3fb); border: 1px solid #e3e9f5;
+    border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; }
+.brief-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.brief-head h3 { font-size: 15px; color: #2F5496; white-space: nowrap; }
+.brief-body { font-size: 13px; line-height: 1.85; color: #222; }
+.brief-body b { color: #1a2b4a; }
+.brief-body p { margin: 6px 0; }
+.badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #e8eef9; color: #2F5496; white-space: nowrap; }
+.today-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.panel { border: 1px solid #eef0f4; border-radius: 10px; padding: 12px 14px; background: #fff; }
+.panel h4 { font-size: 13px; margin-bottom: 10px; color: #333; }
+.alert-item { display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px; background: #fafbfc;
+    border-radius: 8px; margin-bottom: 6px; font-size: 12.5px; border-left: 3px solid #ccc; }
+.alert-item.high { border-left-color: #CC0000; background: #fff5f5; }
+.alert-item.mid { border-left-color: #FFC000; background: #fffdf3; }
+.alert-item .tag { font-size: 11px; color: #888; white-space: nowrap; }
+.action-item { padding: 10px 12px; border-radius: 8px; background: #fff; border: 1px solid #eee;
+    margin-bottom: 8px; font-size: 13px; line-height: 1.6; }
+.action-item .reason { font-size: 11.5px; color: #999; margin-top: 2px; }
+.pri { font-size: 11px; padding: 1px 7px; border-radius: 8px; margin-right: 6px; }
+.pri-today { background: #ffecec; color: #CC0000; }
+.pri-week { background: #fff6e0; color: #A67C00; }
+.pri-keep { background: #eef7ee; color: #2E7D32; }
+
+.sector-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; font-size: 12px; }
+.sector-bar .sname { width: 130px; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sector-bar .track { flex: 1; height: 8px; background: #eef0f4; border-radius: 4px; overflow: hidden; }
+.sector-bar .fill { height: 100%; background: #2F5496; border-radius: 4px; }
+.sector-bar .pct { width: 42px; text-align: right; color: #888; font-variant-numeric: tabular-nums; }
+
+.decision-form { display: grid; grid-template-columns: 96px 1.2fr 90px 90px 1.6fr auto; gap: 8px;
+    margin-bottom: 16px; align-items: end; background: #f9fafc; border: 1px solid #eef0f4; border-radius: 10px; padding: 12px; }
+.decision-form label { font-size: 11px; color: #888; display: block; margin-bottom: 3px; }
+.decision-form input, .decision-form select { width: 100%; padding: 7px 9px; border: 1px solid #ddd;
+    border-radius: 7px; font-size: 12.5px; font-family: inherit; }
+.status-pill { font-size: 11px; padding: 1px 7px; border-radius: 8px; background: #f0f0f0; color: #666; }
+.status-done { background: #eef7ee; color: #2E7D32; }
+
+@media (max-width: 900px) {
+    .metric-row { grid-template-columns: repeat(3, 1fr); }
+    .today-grid { grid-template-columns: 1fr; }
+    .decision-form { grid-template-columns: 1fr 1fr; }
+    .header { flex-wrap: wrap; }
+    .header-actions { flex-wrap: wrap; overflow: visible; max-width: 100%; padding-bottom: 2px; gap: 6px !important; }
+    .header-actions .btn { white-space: nowrap; flex: 0 0 auto; }
+    .status-bar { display: none; }
+    .tab-bar { overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+    .tab-bar::-webkit-scrollbar { display: none; }
+    .tab-btn { flex: 0 0 auto; padding: 8px 12px; }
+    .brief-card { padding: 12px 14px; }
+    .metric-tile .value { font-size: 15px; }
+}
+
 /* 设置弹窗 */
 .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
     background: rgba(0,0,0,0.4); z-index: 1000; align-items: center; justify-content: center; }
@@ -216,7 +276,7 @@ tr:hover { background: #f8f9ff; }
 <!-- ===== 顶部 ===== -->
 <div class="header">
     <h1 onclick="switchLayout('split')" title="点击切换布局">📈 给老子涨</h1>
-    <div style="display:flex;align-items:center;gap:12px;">
+    <div class="header-actions" style="display:flex;align-items:center;gap:12px;">
         <span class="status-bar" id="statusBar">就绪</span>
         <button class="btn btn-sm btn-outline" id="eyeToggle" onclick="toggleEye()" title="隐藏/显示金额">👁️</button>
         <button class="btn btn-sm btn-outline" onclick="showSettings()">⚙️</button>
@@ -247,17 +307,42 @@ tr:hover { background: #f8f9ff; }
 
         <div style="flex:1;display:flex;flex-direction:column;min-height:0;">
             <div class="tab-bar">
-                <button class="tab-btn active" onclick="switchTab('holdings',this)">📋 持仓</button>
+                <button class="tab-btn active" onclick="switchTab('today',this)">☀️ 今日</button>
+                <button class="tab-btn" onclick="switchTab('holdings',this)">📋 持仓</button>
                 <button class="tab-btn" onclick="switchTab('cleared',this)">📁 已清仓</button>
                 <button class="tab-btn" onclick="switchTab('charts',this)">📊 图表</button>
                 <button class="tab-btn" onclick="switchTab('kline',this)">📈 K线</button>
-                <button class="tab-btn" onclick="switchTab('risks',this)">⚠️ 风险</button>
+                <button class="tab-btn" onclick="switchTab('risks',this)">🧭 诊断</button>
                 <button class="tab-btn" onclick="switchTab('history',this)">📈 净值</button>
                 <button class="tab-btn" onclick="switchTab('breakeven',this)">🎯 回本</button>
+                <button class="tab-btn" onclick="switchTab('decisions',this)">🗂 决策</button>
                 <button class="tab-btn" onclick="switchTab('advice',this)">💡 建议</button>
             </div>
 
-            <div class="tab-content active" id="tabHoldings">
+            <div class="tab-content active" id="tabToday">
+                <div class="brief-card">
+                    <div class="brief-head">
+                        <h3>☀️ 今日晨报</h3>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span class="badge" id="briefSource">生成中…</span>
+                            <button class="btn btn-sm btn-outline" onclick="loadToday(true)">🔄 重新生成</button>
+                        </div>
+                    </div>
+                    <div class="brief-body" id="briefBody"><span class="spinner"></span> 正在生成今日晨报…</div>
+                </div>
+                <div class="today-grid">
+                    <div class="panel">
+                        <h4>⚡ 今日关注</h4>
+                        <div id="alertList"><div style="font-size:12px;color:#999;">加载中…</div></div>
+                    </div>
+                    <div class="panel">
+                        <h4>✅ 行动清单</h4>
+                        <div id="actionList"><div style="font-size:12px;color:#999;">加载中…</div></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-content" id="tabHoldings">
                 <div class="table-wrap"><table><thead><tr>
                     <th onclick="sortBy('name')" style="cursor:pointer;">名称 <span class="sort-arrow"></span></th>
                     <th onclick="sortBy('account')" style="cursor:pointer;">账户 <span class="sort-arrow"></span></th>
@@ -300,8 +385,23 @@ tr:hover { background: #f8f9ff; }
                 <div id="klineEmpty" class="empty-state" style="display:none;"><div class="icon">📈</div><div>暂无K线数据</div></div>
             </div>
 
-            <div class="tab-content" id="tabRisks"><div class="risk-list" id="risksContainer"></div>
-                <div id="risksEmpty" class="empty-state" style="display:none;"><div class="icon">✅</div><div>无显著风险</div></div>
+            <div class="tab-content" id="tabRisks">
+                <div class="metric-row" id="insightMetrics"></div>
+                <div class="charts-row">
+                    <div class="chart-box" style="height:250px;"><canvas id="benchChart"></canvas></div>
+                    <div class="chart-box" style="height:250px;"><canvas id="attrChart"></canvas></div>
+                </div>
+                <div class="today-grid" style="margin-top:14px;">
+                    <div class="panel">
+                        <h4>🧭 风险清单</h4>
+                        <div class="risk-list" id="risksContainer"></div>
+                        <div id="risksEmpty" class="empty-state" style="display:none;"><div class="icon">✅</div><div>无显著风险</div></div>
+                    </div>
+                    <div class="panel">
+                        <h4>🏷 行业暴露（占总资产）</h4>
+                        <div id="sectorList"><div style="font-size:12px;color:#999;">加载中…</div></div>
+                    </div>
+                </div>
             </div>
 
             <div class="tab-content" id="tabHistory"><div class="history-table" id="historyContainer"></div>
@@ -316,6 +416,27 @@ tr:hover { background: #f8f9ff; }
             <div class="tab-content" id="tabBreakeven">
                 <div id="beContainer"></div>
                 <div id="beEmpty" class="empty-state" style="display:none;"><div class="icon">🎯</div><div>暂无数据</div></div>
+            </div>
+
+            <div class="tab-content" id="tabDecisions">
+                <div class="decision-form">
+                    <div><label>类型</label><select id="dType">
+                        <option>买入</option><option>加仓</option><option>减仓</option><option>卖出</option><option>观察</option>
+                    </select></div>
+                    <div><label>标的</label><input id="dName" list="stockOptions" placeholder="如 三花智控"></div>
+                    <div><label>参考价</label><input id="dPrice" type="number" step="0.01" placeholder="当前价"></div>
+                    <div><label>目标价</label><input id="dTarget" type="number" step="0.01" placeholder="可选"></div>
+                    <div><label>理由</label><input id="dReason" placeholder="为什么做这笔操作"></div>
+                    <div><button class="btn btn-sm btn-primary" onclick="addDecision()">记录决策</button></div>
+                </div>
+                <datalist id="stockOptions"></datalist>
+                <div class="table-wrap" style="max-height:none;">
+                    <table><thead><tr>
+                        <th>日期</th><th>标的</th><th>类型</th><th class="num">参考价</th>
+                        <th class="num">现价</th><th class="num">至今</th><th>理由</th><th>状态</th><th>操作</th>
+                    </tr></thead><tbody id="decisionBody"></tbody></table>
+                </div>
+                <div id="decisionsEmpty" class="empty-state" style="display:none;"><div class="icon">🗂</div><div>还没有决策记录</div></div>
             </div>
         </div>
     </div>
@@ -560,8 +681,8 @@ tr:hover { background: #f8f9ff; }
 
 <script>
 // ============ 全局状态 ============
-let state = { data: null };
-let chartPie = null, chartLine = null;
+let state = { data: null, insights: null, briefLoaded: false };
+let chartPie = null, chartLine = null, chartBench = null, chartAttr = null;
 let isStreaming = false;
 let pwdPendingAction = null;
 let rpEditingRow = null;
@@ -722,17 +843,12 @@ function render() {
         realizedEl.style.color = d.realized_pnl >= 0 ? "#CC0000" : "#009900";
     }
 
-    // 风险 KPI
-    try { fetch("/api/advice").then(r=>r.json()).then(r=>{
-        const count = r.risks ? r.risks.length : 0;
-        document.getElementById("kpiRisk").textContent = count;
-        document.getElementById("kpiRisk").style.color = count > 0 ? "#CC0000" : "#009900";
-        document.getElementById("kpiRiskLabel").textContent = count > 0 ? "待处理" : "无风险";
-        document.getElementById("risksContainer").innerHTML = r.risks.map(ri => {
-            const cls = ri.level.includes("高风险") ? "risk-high" : "risk-mid";
-            return `<div class="risk-item ${cls}"><div class="level">${ri.level}</div><div class="issue">${ri.issue}</div><div class="suggestion">→ ${ri.suggestion}</div></div>`;
-        }).join("");
-    }).catch(()=>{}); } catch(e) {}
+    // 股票下拉候选
+    const dl = document.getElementById("stockOptions");
+    if (dl) {
+        const names = (d.holdings_raw || []).filter(h => h.type === "股票").map(h => h.name);
+        dl.innerHTML = names.map(n => `<option value="${escapeHtml(n)}">`).join("");
+    }
 
     // 持仓表（排序）
     const body = document.getElementById("holdingsBody");
@@ -946,6 +1062,9 @@ function switchTab(name, btn) {
     if (name === "breakeven") loadBreakeven();
     if (name === "kline") loadKlineData();
     if (name === "cleared") renderCleared();
+    if (name === "today") loadToday();
+    if (name === "risks") loadInsights();
+    if (name === "decisions") loadDecisions();
 }
 
 // ============ K线 ============
@@ -2227,9 +2346,247 @@ function marked(text) {
     return t;
 }
 
+// ============ 今日晨报 ============
+async function loadToday(force) {
+    const body = document.getElementById("briefBody");
+    const badge = document.getElementById("briefSource");
+    body.innerHTML = '<span class="spinner"></span> 正在生成今日晨报…';
+    badge.textContent = "生成中…";
+    try {
+        const opts = force ? {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({force: true}),
+        } : {};
+        const res = await fetch("/api/briefing", opts);
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        const b = d.briefing || {};
+        body.innerHTML = marked(b.content || "暂无内容");
+        badge.textContent = (b.source === "AI" ? "AI 生成" : "规则生成") + " · " + (b.time || "");
+        state.briefLoaded = true;
+        if (d.snapshot) { state.insights = d.snapshot; renderTodaySide(d.snapshot); }
+        else {
+            await loadInsights(true);
+            if (state.insights) renderTodaySide(state.insights);
+        }
+    } catch (e) {
+        body.textContent = "晨报加载失败：" + e.message;
+        badge.textContent = "失败";
+    }
+}
+
+function renderTodaySide(snap) {
+    const alerts = snap.alerts || [];
+    const alertEl = document.getElementById("alertList");
+    alertEl.innerHTML = alerts.length ? alerts.map(a => `
+        <div class="alert-item ${a.level === '高' ? 'high' : a.level === '中' ? 'mid' : ''}">
+            <span><b>${escapeHtml(a.name)}</b> · ${escapeHtml(a.text)}</span>
+            <span class="tag">${escapeHtml(a.type)}</span>
+        </div>`).join("") : '<div style="font-size:12px;color:#999;">今日无异常波动</div>';
+
+    const actions = snap.actions || [];
+    document.getElementById("actionList").innerHTML = actions.map(a => {
+        const cls = a.priority === "今日" ? "pri-today" : a.priority === "本周" ? "pri-week" : "pri-keep";
+        return `<div class="action-item"><span class="pri ${cls}">${escapeHtml(a.priority)}</span>${escapeHtml(a.action)}
+            <div class="reason">${escapeHtml(a.reason)}</div></div>`;
+    }).join("");
+
+    // 风险 KPI 与诊断页保持一致
+    const riskCount = (snap.risks || []).filter(r => r.level !== "低").length;
+    const kpi = document.getElementById("kpiRisk");
+    if (kpi) {
+        kpi.textContent = riskCount;
+        kpi.style.color = riskCount > 0 ? "#CC0000" : "#009900";
+        document.getElementById("kpiRiskLabel").textContent = riskCount > 0 ? "待处理" : "无风险";
+    }
+    renderRisks(snap.risks || []);
+}
+
+function renderRisks(rows) {
+    const c = document.getElementById("risksContainer");
+    c.innerHTML = rows.map(r => {
+        const cls = r.level === "高" ? "risk-high" : r.level === "中" ? "risk-mid" : "";
+        return `<div class="risk-item ${cls}"><div class="level">${r.level === "高" ? "🔴 高风险" : r.level === "中" ? "🟡 中风险" : "🟢 低风险"} · ${escapeHtml(r.title)}</div>
+            <div class="issue">${escapeHtml(r.detail)}</div>
+            <div class="suggestion">→ ${escapeHtml(r.action)}</div></div>`;
+    }).join("");
+    document.getElementById("risksEmpty").style.display = rows.length ? "none" : "block";
+}
+
+// ============ 深度诊断 ============
+async function loadInsights(force) {
+    if (state.insights && !force) { renderInsights(state.insights); return; }
+    try {
+        const res = await fetch("/api/insights");
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        state.insights = d;
+        renderInsights(d);
+    } catch (e) {
+        document.getElementById("insightMetrics").innerHTML =
+            `<div style="font-size:12px;color:#CC0000;">诊断加载失败：${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function renderInsights(d) {
+    const m = (d.performance || {}).metrics || {};
+    const sign = v => (v >= 0 ? "+" : "") + v.toFixed(1) + "%";
+    const color = v => v >= 0 ? "#CC0000" : "#009900";
+    const tiles = [
+        { label: "区间收益", value: sign(m.account_return || 0), sub: (m.start_date || "") + " 起", color: color(m.account_return || 0) },
+        { label: m.benchmark_name || "沪深300", value: sign(m.benchmark_return || 0), sub: "同期基准", color: color(m.benchmark_return || 0) },
+        { label: "超额收益", value: (m.excess_return >= 0 ? "+" : "") + (m.excess_return || 0).toFixed(1) + "pp", sub: "跑赢基准", color: color(m.excess_return || 0) },
+        { label: "最大回撤", value: (m.max_drawdown || 0).toFixed(1) + "%", sub: "区间峰值回落", color: "#009900" },
+        { label: "年化波动", value: (m.volatility || 0).toFixed(1) + "%", sub: "日收益标准差", color: "#555" },
+        { label: "上涨天数占比", value: (m.win_rate || 0).toFixed(0) + "%", sub: `共 ${m.trading_days || 0} 个快照`, color: "#555" },
+    ];
+    document.getElementById("insightMetrics").innerHTML = tiles.map(t =>
+        `<div class="metric-tile"><div class="label">${t.label}</div>
+         <div class="value" style="color:${t.color}">${t.value}</div><div class="sub">${t.sub}</div></div>`).join("");
+
+    const points = (d.performance || {}).points || [];
+    if (chartBench) chartBench.destroy();
+    if (points.length) {
+        chartBench = new Chart(document.getElementById("benchChart"), {
+            type: "line",
+            data: {
+                labels: points.map(p => p.date.slice(5)),
+                datasets: [
+                    { label: "我的账户", data: points.map(p => p.account), borderColor: "#2F5496",
+                      backgroundColor: "rgba(47,84,150,0.08)", fill: true, tension: 0.25, pointRadius: 0, borderWidth: 2 },
+                    { label: m.benchmark_name || "沪深300", data: points.map(p => p.benchmark), borderColor: "#FFC000",
+                      borderDash: [5, 4], tension: 0.25, pointRadius: 0, borderWidth: 2 },
+                ],
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false, animation: {duration: 0},
+                plugins: { legend: {position: "bottom", labels: {font: {size: 11}}},
+                    title: {display: true, text: "累计走势（起点=100）", font: {size: 12}} },
+                scales: { x: {ticks: {maxTicksLimit: 8, font: {size: 10}}},
+                          y: {ticks: {font: {size: 10}}} },
+            },
+        });
+    }
+
+    const items = ((d.attribution || {}).items || []).filter(x => Math.abs(x.pnl) > 1).slice(0, 12);
+    if (chartAttr) chartAttr.destroy();
+    if (items.length) {
+        chartAttr = new Chart(document.getElementById("attrChart"), {
+            type: "bar",
+            data: {
+                labels: items.map(x => x.name),
+                datasets: [{ label: "累计盈亏（元）", data: items.map(x => x.pnl),
+                    backgroundColor: items.map(x => x.pnl >= 0 ? "rgba(204,0,0,0.75)" : "rgba(0,153,0,0.75)"),
+                    borderRadius: 4 }],
+            },
+            options: {
+                indexAxis: "y", responsive: true, maintainAspectRatio: false, animation: {duration: 0},
+                plugins: { legend: {display: false},
+                    title: {display: true, text: "盈亏归因（含已实现）", font: {size: 12}},
+                    tooltip: {callbacks: {label: c => (c.raw >= 0 ? "+" : "") + c.raw.toLocaleString() + " 元"}} },
+                scales: { x: {ticks: {font: {size: 10}}}, y: {ticks: {font: {size: 10}}} },
+            },
+        });
+    }
+
+    renderRisks(d.risks || []);
+
+    const sectors = ((d.exposure || {}).sectors || []);
+    document.getElementById("sectorList").innerHTML = sectors.map(s => `
+        <div class="sector-bar"><span class="sname" title="${escapeHtml(s.sector)}">${escapeHtml(s.sector)}</span>
+        <span class="track"><span class="fill" style="width:${Math.min(s.pct_total * 2.5, 100)}%"></span></span>
+        <span class="pct">${s.pct_total.toFixed(1)}%</span></div>`).join("")
+        || '<div style="font-size:12px;color:#999;">暂无数据</div>';
+}
+
+// ============ 决策记录 ============
+async function loadDecisions() {
+    try {
+        const res = await fetch("/api/decisions");
+        const d = await res.json();
+        state.decisions = d.decisions || [];
+        renderDecisions();
+    } catch (e) {
+        document.getElementById("decisionBody").innerHTML = "";
+    }
+}
+
+function renderDecisions() {
+    const rows = state.decisions || [];
+    const body = document.getElementById("decisionBody");
+    body.innerHTML = rows.map((r, i) => {
+        const since = r.since_pct === null || r.since_pct === undefined ? "--"
+            : `<span class="${r.since_pct >= 0 ? 'up' : 'down'}">${r.since_pct >= 0 ? '+' : ''}${r.since_pct.toFixed(1)}%</span>`;
+        const done = r.status === "已执行" || r.status === "已复盘";
+        return `<tr>
+            <td style="font-size:12px;color:#888;">${escapeHtml(r.date.slice(0, 10))}</td>
+            <td><b>${escapeHtml(r.name)}</b></td>
+            <td>${escapeHtml(r.type)}</td>
+            <td class="num">${r.price || "--"}</td>
+            <td class="num">${r.current_price || "--"}</td>
+            <td class="num">${since}</td>
+            <td style="font-size:12px;color:#666;max-width:220px;">${escapeHtml(r.reason || "")}</td>
+            <td><span class="status-pill ${done ? 'status-done' : ''}">${escapeHtml(r.status || "待执行")}</span></td>
+            <td style="white-space:nowrap;">
+                <button class="btn btn-sm btn-outline" onclick="setDecision(${i},'已执行')">执行</button>
+                <button class="btn btn-sm btn-outline" onclick="reviewDecision(${i})">复盘</button>
+                <button class="btn btn-sm btn-outline" onclick="deleteDecision(${i})">删</button>
+            </td></tr>`;
+    }).join("");
+    document.getElementById("decisionsEmpty").style.display = rows.length ? "none" : "block";
+}
+
+async function postDecision(payload) {
+    const res = await fetch("/api/decisions", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload),
+    });
+    const d = await res.json();
+    if (!d.success) { alert(d.error || "操作失败"); return false; }
+    state.decisions = d.decisions || [];
+    renderDecisions();
+    return true;
+}
+
+async function addDecision() {
+    const name = document.getElementById("dName").value.trim();
+    if (!name) { alert("请填写标的"); return; }
+    const payload = {
+        action: "create",
+        type: document.getElementById("dType").value,
+        name,
+        price: document.getElementById("dPrice").value || 0,
+        target: document.getElementById("dTarget").value || 0,
+        reason: document.getElementById("dReason").value.trim(),
+    };
+    if (await postDecision(payload)) {
+        ["dName", "dPrice", "dTarget", "dReason"].forEach(id => document.getElementById(id).value = "");
+    }
+}
+
+async function setDecision(i, status) {
+    const r = state.decisions[i];
+    if (r) await postDecision({action: "update", row: r.row, status});
+}
+
+async function reviewDecision(i) {
+    const r = state.decisions[i];
+    if (!r) return;
+    const note = prompt(`复盘「${r.name}」：这笔决策结果如何？`, r.review || "");
+    if (note === null) return;
+    await postDecision({action: "update", row: r.row, status: "已复盘", review: note});
+}
+
+async function deleteDecision(i) {
+    const r = state.decisions[i];
+    if (!r || !confirm(`删除「${r.name}」这条决策记录？`)) return;
+    await postDecision({action: "delete", row: r.row});
+}
+
 // ============ 初始化 ============
-// 打开页面先拉一次实时行情，避免看到昨天的旧价格
-refreshData();
+// 先用本地数据渲染 → 晨报和提醒 → 再刷新实时行情（服务端串行处理，避免排队卡首页）
+loadData();
+loadToday().finally(() => refreshData());
 
 // 加载聊天历史（没有历史则显示默认问候）
 if (!loadChatHistory()) {
