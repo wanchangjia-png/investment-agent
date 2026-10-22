@@ -628,17 +628,23 @@ def delete_realized_pnl(row_num):
 
 
 def get_cleared_positions():
-    """获取已清仓股票列表（持股数=0 的持仓 + 已实现盈亏记录）"""
+    """获取已清仓股票列表；有交易流水时以流水的真实成本为准"""
     try:
         wb = openpyxl.load_workbook(EXCEL_PATH)
         ws = wb["持仓表"]
         cleared = []
         cleared_names = set()
+        active_names = set()
         for row in ws.iter_rows(min_row=2, values_only=True):
             if row[0] is None or (isinstance(row[0], str) and row[0] == "合计"):
                 break
-            if row[0] == "股票" and (row[4] is None or row[4] == 0):
-                name = str(row[2]) if row[2] else ""
+            if row[0] != "股票":
+                continue
+            name = str(row[2]) if row[2] else ""
+            qty = row[4] or 0
+            if qty > 0:
+                active_names.add(name)
+            elif name:
                 cleared.append({
                     "name": name,
                     "account": str(row[1]) if row[1] else "",
@@ -646,15 +652,25 @@ def get_cleared_positions():
                     "cost": float(row[5]) if row[5] else 0,
                     "last_price": float(row[6]) if row[6] else 0,
                 })
-                if name:
-                    cleared_names.add(name)
+                cleared_names.add(name)
         wb.close()
 
-        # 匹配已实现盈亏
+        # 流水口径：只认真正卖出过的记录
+        ledger_pnl, ledger_date = {}, {}
+        for t in load_transactions():
+            if t["direction"] != "卖出":
+                continue
+            name = t["name"]
+            if t["realized"] is not None:
+                ledger_pnl[name] = ledger_pnl.get(name, 0) + t["realized"]
+            if name not in ledger_date or t["date"] > ledger_date[name]:
+                ledger_date[name] = t["date"][:10]
+
+        # 匹配已实现盈亏（流水中没有的旧记录才用）
         realized_records = get_realized_pnl_records()
         pnl_map = {}
         date_map = {}
-        last_record_map = {}  # name → 最近一条记录的卖出价和成本价
+        last_record_map = {}
         for r in realized_records:
             name = r["name"]
             pnl_map[name] = pnl_map.get(name, 0) + r["pnl"]
@@ -663,13 +679,15 @@ def get_cleared_positions():
                 last_record_map[name] = {"price": r["price"], "cost": r["cost"]}
 
         for c in cleared:
-            c["realized_pnl"] = round(pnl_map.get(c["name"], 0), 2)
-            c["clear_date"] = date_map.get(c["name"], "")
+            name = c["name"]
+            c["realized_pnl"] = round(ledger_pnl.get(name, pnl_map.get(name, 0)), 2)
+            c["clear_date"] = ledger_date.get(name) or date_map.get(name, "")
+        cleared = [c for c in cleared if c["name"] not in active_names]
 
-        # 补充：只在已实现盈亏有记录、但持仓表已无对应行的股票
+        # 补充：有记录、但持仓表里没有对应行的股票
         for r in realized_records:
             name = r["name"]
-            if name and name not in cleared_names:
+            if name and name not in cleared_names and name not in active_names and name not in ledger_pnl:
                 info = last_record_map.get(name, {})
                 cleared.append({
                     "name": name,
