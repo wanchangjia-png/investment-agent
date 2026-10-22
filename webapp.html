@@ -193,6 +193,9 @@ tr:hover { background: #f8f9ff; }
 .gate-chip.fail { background: #fff0f0; border-color: #f0caca; color: #CC0000; }
 .gate-chip.pending { background: #fffdf2; border-color: #efe0b8; color: #A67C00; }
 .gate-chip b { font-weight: 600; }
+.discipline-ai-note:not(:empty) { margin-top: 9px; font-size: 12.5px; line-height: 1.65; color: #444;
+    background: #f3f7ff; border: 1px solid #e0e9f8; border-radius: 8px; padding: 7px 10px; }
+.discipline-ai-note b { color: #1a2b4a; }
 .discipline-alerts { margin-top: 10px; }
 .discipline-item { font-size: 12.5px; line-height: 1.65; padding: 8px 10px; border-radius: 8px;
     margin-top: 6px; border-left: 3px solid #ccc; background: #fafbfe; }
@@ -449,6 +452,7 @@ tr:hover { background: #f8f9ff; }
                 <div class="panel discipline-panel" style="margin-top:14px;">
                     <h4>你的交易纪律 <span class="badge" style="background:#eef3ff;color:#2F5496;">按你的习惯定制</span></h4>
                     <div class="gate-row" id="disciplineGates"></div>
+                    <div id="disciplineAiNote" class="discipline-ai-note"></div>
                     <div id="disciplineAlerts" class="discipline-alerts"></div>
                     <div class="discipline-actions">
                         <button class="btn btn-primary btn-sm" onclick="showAddCheck()">🧮 补仓算账</button>
@@ -2494,6 +2498,18 @@ function renderDiscipline(snap) {
         return `<span class="gate-chip ${cls}" title="${escapeHtml(g.current || "")}">${icon} <b>${escapeHtml(g.label)}</b> ${escapeHtml(g.current || "")}</span>`;
     }).join("");
 
+    const mv = state.marketView;
+    const note = document.getElementById("disciplineAiNote");
+    if (note) {
+        if (!mv) {
+            note.innerHTML = "";
+        } else {
+            const ruleStance = (mv.rule || {}).stance || "";
+            const diff = ruleStance && ruleStance !== mv.stance;
+            note.innerHTML = `<span class="ai-dot">🧠</span> AI 判断（${escapeHtml((mv.as_of || "").slice(11, 16))}，置信度${escapeHtml(mv.confidence || "低")}）：<b>${escapeHtml(mv.stance || "")}</b>，买入权限「${escapeHtml(mv.buy_permission || "")}」${diff ? `；机械规则为「${escapeHtml(ruleStance)}」，两者不一致时按 AI 的结论再确认一次` : ""}`;
+        }
+    }
+
     const items = [];
     (d.take_profit || []).forEach(t => items.push(
         `<div class="discipline-item take-profit">🎯 ${escapeHtml(t.message)}</div>`));
@@ -2542,6 +2558,8 @@ async function loadMarketView(force) {
 }
 
 function renderMarketView(d) {
+    state.marketView = d;
+    if (state.insights) renderDiscipline(state.insights);
     const stance = d.stance || "观察中";
     const badge = document.getElementById("marketStance");
     badge.textContent = `${stance} · 置信度${d.confidence || "低"}`;
