@@ -186,6 +186,33 @@ tr:hover { background: #f8f9ff; }
 .glossary-item { background: rgba(255,255,255,.7); border: 1px solid rgba(0,0,0,.05); border-radius: 8px;
     padding: 7px 10px; margin-top: 6px; line-height: 1.65; }
 .glossary-item b { color: #1a2b4a; }
+.gate-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.gate-chip { border-radius: 999px; padding: 5px 11px; font-size: 12px; border: 1px solid #e5e8f0;
+    background: #f7f8fc; color: #666; display: flex; align-items: center; gap: 5px; }
+.gate-chip.pass { background: #eef8f0; border-color: #cfe8d6; color: #2E7D32; }
+.gate-chip.fail { background: #fff0f0; border-color: #f0caca; color: #CC0000; }
+.gate-chip.pending { background: #fffdf2; border-color: #efe0b8; color: #A67C00; }
+.gate-chip b { font-weight: 600; }
+.discipline-alerts { margin-top: 10px; }
+.discipline-item { font-size: 12.5px; line-height: 1.65; padding: 8px 10px; border-radius: 8px;
+    margin-top: 6px; border-left: 3px solid #ccc; background: #fafbfe; }
+.discipline-item.take-profit { border-left-color: #CC0000; background: #fff7f7; }
+.discipline-item.red-line { border-left-color: #CC0000; background: #fff0f0; font-weight: 500; }
+.discipline-item.gold { border-left-color: #C9A227; background: #fffdf3; }
+.discipline-item .muted { color: #888; font-weight: 400; }
+.discipline-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.discipline-max { font-size: 12px; color: #888; }
+.ac-gate { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px;
+    padding: 6px 0; border-bottom: 1px dashed #eee; }
+.ac-gate:last-child { border-bottom: none; }
+.ac-gate .ok { color: #2E7D32; font-weight: 600; }
+.ac-gate .no { color: #CC0000; font-weight: 600; }
+.ac-verdict { font-size: 15px; font-weight: 700; padding: 10px 12px; border-radius: 10px; margin-bottom: 10px; }
+.ac-verdict.pass { background: #eef8f0; color: #2E7D32; border: 1px solid #cfe8d6; }
+.ac-verdict.fail { background: #fff0f0; color: #CC0000; border: 1px solid #f0caca; }
+.ac-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; font-size: 12.5px; margin: 10px 0; }
+.ac-grid div span { color: #888; }
+.ac-grid div b { color: #1a2b4a; }
 
 .loss-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin-bottom: 9px; }
 .loss-row .lname { width: 76px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -379,6 +406,16 @@ tr:hover { background: #f8f9ff; }
                     <div class="panel">
                         <h4>离回本还差多少</h4>
                         <div id="recoveryList"><div style="font-size:12px;color:#999;">加载中…</div></div>
+                    </div>
+                </div>
+
+                <div class="panel discipline-panel" style="margin-top:14px;">
+                    <h4>你的交易纪律 <span class="badge" style="background:#eef3ff;color:#2F5496;">按你的习惯定制</span></h4>
+                    <div class="gate-row" id="disciplineGates"></div>
+                    <div id="disciplineAlerts" class="discipline-alerts"></div>
+                    <div class="discipline-actions">
+                        <button class="btn btn-primary btn-sm" onclick="showAddCheck()">🧮 补仓算账</button>
+                        <span id="disciplineMax" class="discipline-max"></span>
                     </div>
                 </div>
 
@@ -633,6 +670,33 @@ tr:hover { background: #f8f9ff; }
             <button class="btn btn-outline" onclick="hideTradeModal()">取消</button>
             <button class="btn btn-outline" onclick="previewTrade()">预览</button>
             <button class="btn btn-primary" id="trConfirmBtn" onclick="confirmTrade()" disabled>确认保存</button>
+        </div>
+    </div>
+</div>
+
+<!-- 补仓算账弹窗 -->
+<div class="modal-overlay" id="addCheckModal">
+    <div class="modal" style="width:560px;max-width:95vw;max-height:90vh;overflow-y:auto;">
+        <button class="close-btn" onclick="hideAddCheck()">&times;</button>
+        <h2>🧮 补仓算账</h2>
+        <p class="hint" style="font-size:12px;color:#888;margin-bottom:12px;">
+            只算账，不会下单。五关全过才显示「可补」，否则告诉你卡在哪一条。
+        </p>
+        <div class="trade-form">
+            <div class="field"><label>股票</label><select id="acName" onchange="onAddCheckNameChange()"></select></div>
+            <div class="field"><label>补仓金额（元）</label><input type="number" id="acAmount" min="0" step="100" value="10000" oninput="invalidateAddCheck()"></div>
+            <div class="field"><label>预计成交价</label><input type="number" id="acPrice" min="0" step="0.001" oninput="invalidateAddCheck()"></div>
+            <div class="field"><label>补仓后持股</label><input id="acQtyPreview" disabled value="—"></div>
+        </div>
+        <label class="trade-sync" style="margin-top:10px;">
+            <input type="checkbox" id="acFundamental" onchange="invalidateAddCheck()">
+            我确认：公司业绩、行业逻辑、近期消息没有变坏
+        </label>
+        <div id="acResult" class="trade-preview" style="display:none;"></div>
+        <div id="acError" style="color:#CC0000;font-size:13px;margin-top:8px;display:none;"></div>
+        <div class="modal-actions">
+            <button class="btn btn-outline" onclick="hideAddCheck()">关闭</button>
+            <button class="btn btn-primary" id="acRunBtn" onclick="runAddCheck()">开始算账</button>
         </div>
     </div>
 </div>
@@ -1946,7 +2010,8 @@ async function loadBreakeven() {
                 const rec = s.recommendation;
                 const aiResultId = "aiResult-" + s.name;
                 const cashAvail = rec ? rec.cash_available : 0;
-                html += `<div style="margin-top:8px;text-align:center;">
+                html += `<div style="margin-top:8px;text-align:center;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+                    <button class="btn btn-sm btn-primary" onclick="showAddCheck('${s.name}')">🧮 补仓算账（先过五关）</button>
                     <button class="btn btn-sm btn-green" onclick="loadAiAddAdvice('${s.name}','${getSector(s.name)}',${s.qty},${s.cost},${s.price},${cashAvail},'${aiResultId}',this)">🤖 AI 加仓分析</button>
                 </div>
                 <div id="${aiResultId}" style="margin-top:6px;"></div>`;
@@ -2346,6 +2411,7 @@ function renderTodaySide(snap) {
         .map(g => `<div class="glossary-item"><b>${escapeHtml(g.term)}</b>：${escapeHtml(g.meaning)}</div>`).join("");
 
     renderTodayMetrics(snap);
+    renderDiscipline(snap);
 
     // 亏损归因：只显示拖累最大的 3 只
     const losses = (snap.attribution || {}).items?.filter(x => x.pnl < 0).slice(0, 3) || [];
@@ -2379,6 +2445,134 @@ function renderTodaySide(snap) {
         document.getElementById("kpiRiskLabel").textContent = riskCount > 0 ? "待处理" : "无风险";
     }
     renderRisks(snap.risks || []);
+}
+
+function renderDiscipline(snap) {
+    const d = snap.discipline || {};
+    const gates = d.gates || [];
+    document.getElementById("disciplineGates").innerHTML = gates.map(g => {
+        const cls = g.ok === true ? "pass" : g.ok === false ? "fail" : "pending";
+        const icon = g.ok === true ? "✓" : g.ok === false ? "✗" : "○";
+        return `<span class="gate-chip ${cls}" title="${escapeHtml(g.current || "")}">${icon} <b>${escapeHtml(g.label)}</b> ${escapeHtml(g.current || "")}</span>`;
+    }).join("");
+
+    const items = [];
+    (d.take_profit || []).forEach(t => items.push(
+        `<div class="discipline-item take-profit">🎯 ${escapeHtml(t.message)}</div>`));
+    (d.red_lines || []).forEach(r => items.push(
+        `<div class="discipline-item red-line">⛔ ${escapeHtml(r.message)}<br>
+         <span class="muted">执行后这笔亏损就锁定了；不执行请到「决策」里记录理由，别默默拖。</span></div>`));
+
+    const gold = d.gold;
+    const tiers = d.gold_tiers || [];
+    if (gold && tiers.length) {
+        const next = tiers.find(t => !t.reached);
+        const text = next
+            ? `下一个卖出档位 ${next.label} ${next.price} 元/克（还要涨 ${next.distance_pct}%），到价先卖 1/3 ≈ ${next.grams} 克（约 ${Math.round(next.amount).toLocaleString()} 元）。`
+            : `已到卖出档位，按纪律先卖 1/3。`;
+        items.push(`<div class="discipline-item gold">🪙 黄金 ${gold.grams} 克（成本 ${gold.cost} 元/克，现价 ${gold.price} 元/克）：${escapeHtml(text)}</div>`);
+    }
+    document.getElementById("disciplineAlerts").innerHTML = items.join("")
+        || `<div class="discipline-item muted">当前没有触发止盈或红线。</div>`;
+
+    const max = d.suggested_max || 0;
+    document.getElementById("disciplineMax").textContent = max > 0
+        ? `按纪律，今天最多可补 ${Math.round(max).toLocaleString()} 元`
+        : "按纪律，今天可补额度为 0（现金低于 20% 或已触红线）";
+}
+
+// ============ 补仓算账 ============
+function showAddCheck(name) {
+    const stocks = (state.data && state.data.stocks) || [];
+    const sel = document.getElementById("acName");
+    sel.innerHTML = stocks.map(s => `<option value="${escapeHtml(s.name)}">${escapeHtml(s.name)}（${s.qty} 股）</option>`).join("");
+    if (name && stocks.some(s => s.name === name)) sel.value = name;
+    document.getElementById("acFundamental").checked = false;
+    document.getElementById("acResult").style.display = "none";
+    document.getElementById("acError").style.display = "none";
+    const max = (state.insights && state.insights.discipline && state.insights.discipline.suggested_max) || 0;
+    document.getElementById("acAmount").value = max > 0 ? Math.round(max / 100) * 100 : 10000;
+    onAddCheckNameChange();
+    document.getElementById("addCheckModal").classList.add("show");
+}
+
+function hideAddCheck() {
+    document.getElementById("addCheckModal").classList.remove("show");
+}
+
+function onAddCheckNameChange() {
+    const s = ((state.data && state.data.stocks) || []).find(x => x.name === document.getElementById("acName").value);
+    if (s) document.getElementById("acPrice").value = (s.price || 0).toFixed(3);
+    updateAcQtyPreview();
+    document.getElementById("acResult").style.display = "none";
+}
+
+function updateAcQtyPreview() {
+    const price = parseFloat(document.getElementById("acPrice").value) || 0;
+    const amount = parseFloat(document.getElementById("acAmount").value) || 0;
+    const s = ((state.data && state.data.stocks) || []).find(x => x.name === document.getElementById("acName").value);
+    const lots = price > 0 ? Math.floor(amount / price / 100) * 100 : 0;
+    document.getElementById("acQtyPreview").value = s && lots > 0
+        ? `${s.qty} → ${s.qty + lots} 股（本次 ${lots} 股）` : "—";
+}
+
+function invalidateAddCheck() {
+    updateAcQtyPreview();
+    document.getElementById("acResult").style.display = "none";
+}
+
+async function runAddCheck() {
+    const name = document.getElementById("acName").value;
+    const amount = parseFloat(document.getElementById("acAmount").value) || 0;
+    const price = parseFloat(document.getElementById("acPrice").value) || 0;
+    const fundamentals_ok = document.getElementById("acFundamental").checked;
+    const err = document.getElementById("acError");
+    const btn = document.getElementById("acRunBtn");
+    if (!name) { err.textContent = "请选择股票"; err.style.display = "block"; return; }
+    if (amount <= 0) { err.textContent = "请输入补仓金额"; err.style.display = "block"; return; }
+    err.style.display = "none";
+    btn.disabled = true; btn.textContent = "算账中…";
+    try {
+        const res = await fetch("/api/add-check", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, amount, price, fundamentals_ok })
+        });
+        const d = await res.json();
+        if (!res.ok || !d.success) throw new Error(d.error || "算账失败");
+        renderAddCheck(d);
+    } catch (e) {
+        err.textContent = e.message; err.style.display = "block";
+    } finally {
+        btn.disabled = false; btn.textContent = "开始算账";
+    }
+}
+
+function renderAddCheck(d) {
+    const gateHtml = (d.gates || []).map(g => `
+        <div class="ac-gate"><span>${g.ok ? '<span class="ok">✓</span>' : '<span class="no">✗</span>'} ${escapeHtml(g.label)}</span>
+        <span style="color:#666;text-align:right;">${escapeHtml(g.current || "")}<br><span style="font-size:11px;color:#999;">${escapeHtml(g.detail || "")}</span></span></div>`).join("");
+    const verdict = d.allowed
+        ? `<div class="ac-verdict pass">✅ 五关全过，按纪律可以补。</div>`
+        : `<div class="ac-verdict fail">⛔ 先别补：${escapeHtml((d.failed || []).join("、"))} 没过。</div>`;
+    const fmt = v => (v >= 0 ? "+" : "") + Math.round(v).toLocaleString();
+    const html = `${verdict}
+        <div class="ac-grid">
+            <div><span>本次买入</span><br><b>${d.qty} 股 · ${Math.round(d.amount).toLocaleString()} 元</b></div>
+            <div><span>补后持股</span><br><b>${d.qty_old} → ${d.qty_new} 股</b></div>
+            <div><span>成本变化</span><br><b>${d.cost_old.toFixed(3)} → ${d.cost_new.toFixed(3)}</b>（${d.cost_change.toFixed(2)}）</div>
+            <div><span>补后单票占比</span><br><b>${d.single_pct}%</b>（上限 20%）</div>
+            <div><span>补后现金</span><br><b>${Math.round(d.cash_after).toLocaleString()} 元（${d.cash_after_pct}%）</b></div>
+            <div><span>回本需涨</span><br><b>${d.rise_before}% → ${d.rise_after}%</b></div>
+            <div><span>再跌 10% 后浮亏</span><br><b style="color:#009900;">${fmt(d.drop_10_loss)} 元</b></div>
+            <div><span>再跌 20% 后浮亏</span><br><b style="color:#009900;">${fmt(d.drop_20_loss)} 元</b></div>
+        </div>
+        <div style="font-size:12px;color:#666;line-height:1.6;margin-bottom:8px;">
+            ${gateHtml}
+        </div>
+        <div style="font-size:11.5px;color:#999;">按现价 ${d.price} 计算，未含手续费。这只是算账，不会下单；成交后请到「持仓 → 记一笔交易」同步持仓和现金。</div>`;
+    const box = document.getElementById("acResult");
+    box.innerHTML = html;
+    box.style.display = "block";
 }
 
 function renderRisks(rows) {

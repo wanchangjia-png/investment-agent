@@ -968,6 +968,13 @@ def _rule_briefing(snap):
         lines.append("怎么做：")
         for t in v["triggers"]:
             lines.append(f"- {t}")
+    disc = snap.get("discipline") or {}
+    rules = (disc.get("take_profit") or []) + (disc.get("red_lines") or [])
+    if rules:
+        lines.append("")
+        lines.append("纪律提醒：")
+        for r in rules:
+            lines.append(f"- {r['message']}")
     lines.append("")
     lines.append(f"账户健康分 {h.get('score', 0)}/100（{h.get('level', '')}）；"
                  f"整体回本需上涨 {rec.get('need_pct', 0):.1f}%。")
@@ -1013,13 +1020,16 @@ def _ai_briefing(snap):
 
     lines = []
     for h in stocks:
+        ret = (h["收益率"] or 0) * 100
+        state = "浮盈" if ret >= 0 else "浮亏"
         lines.append(
             f"- {h['名称']} {h['数量']}股 现价{h['现价']:.2f} 成本{h['成本价']:.2f} "
-            f"浮亏{(h['收益率'] or 0)*100:.1f}% 占总资产{(h['市值']/pf.get('total_value', 1)*100):.1f}%"
+            f"{state}{ret:+.1f}% 占总资产{h['市值'] / pf.get('total_value', 1) * 100:.1f}%"
         )
     v = snap.get("verdict") or {}
     h = snap.get("health") or {}
     rec = snap.get("recovery") or {}
+    disc = snap.get("discipline") or {}
     context = f"""## 系统结论（必须遵守，不要改变方向）
 {v.get('headline', '')}
 原因：{('；'.join(v.get('reasons', []))) or '无'}
@@ -1040,14 +1050,24 @@ def _ai_briefing(snap):
 
 ## 今日异动
 {chr(10).join(f"- {a['name']}：{a['text']}" for a in (snap.get('alerts') or [])[:5]) or '- 无异动'}
+
+## 万的交易纪律（必须遵守）
+- 现金不低于总资产 20%；单只股票不超过 20%；单笔买入（含补仓）不超过 5%
+- 补仓五关：现金≥20%、单票≤20%、单笔≤5%、净值企稳、基本面/消息没变坏，少一关都不能劝补
+- 止盈：成本 +20%、+30% 各卖 1/3；卖出红线：浮亏 ≥20% 减半
+- 黄金：回到成本卖 1/3，+10% 再卖 1/3
+
+## 当前纪律提醒
+{chr(10).join(f"- {x['message']}" for x in (disc.get('take_profit') or []) + (disc.get('red_lines') or [])) or '- 未触发止盈或红线'}
 """
     system = """你是万万的 A 股投资助手。把数据翻译成人话，不要当分析师表演。
 硬性要求：
 1. 只输出 3 条，每条一行，以「-」开头，总字数不超过 220 字
-2. 只能引用上面给出的数字（现价、成本、回本涨幅、盈亏、回撤、健康分），禁止编造支撑位、压力位、技术形态、宏观消息、公司新闻
-3. 第一条必须与系统结论一致，不能给相反的操作建议
-4. 可以指出最该关注的一只票，并说明为什么（用给出的浮亏/占比/异动数据）
-5. 不承诺收益，不用「大概率」「必涨」这类词
+2. 第一条必须复述系统结论；第二条如果有「当前纪律提醒」，必须原样引用其中一条（保留股票名、股数、金额、价格），没有就写「今天没有新增纪律提醒」；第三条最多再提一只票
+3. 只能引用上面明确给出的数字。禁止出现上下文里没有的股票名、价格、股数、涨跌幅；禁止编造支撑位、压力位、技术形态、宏观消息、公司新闻
+4. 注意涨跌方向：浮盈是正数（如 +33.6%），浮亏是负数，不要把浮盈写成浮亏
+5. 补仓五关没过时，绝不能建议补仓；不要说「适当减仓」，要给具体股数和金额
+6. 不承诺收益，不用「大概率」「必涨」这类词；不确定的数字宁可不写
 不要标题，不要表格，不要结尾总结。"""
     return _call_llm_text(system, context, max_tokens=400, temperature=0.3)
 
@@ -1425,6 +1445,22 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                     result.update(agent.transaction_review())
                     agent.sync_portfolio_to_github()
                     self._send_json(result)
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)}, 400)
+
+        elif path == "/api/add-check":
+            try:
+                name = str(data.get("name", "")).strip()
+                if not name:
+                    self._send_json({"success": False, "error": "请选择要补仓的股票"})
+                    return
+                result = insights.add_check(
+                    name,
+                    float(data.get("amount") or 0),
+                    price=data.get("price"),
+                    fundamentals_ok=bool(data.get("fundamentals_ok")),
+                )
+                self._send_json({"success": True, **result})
             except Exception as e:
                 self._send_json({"success": False, "error": str(e)}, 400)
 

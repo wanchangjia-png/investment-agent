@@ -15,6 +15,16 @@ BEIJING_TZ = timezone(timedelta(hours=8))
 BENCHMARK_CODE = "sh000300"
 BENCHMARK_NAME = "沪深300"
 
+# ============ 万万的交易纪律（2026-10-22 按她的习惯定制）============
+DISCIPLINE = {
+    "cash_floor_pct": 20.0,      # 现金长期不低于总资产 20%
+    "single_cap_pct": 20.0,      # 单只股票不超过 20%
+    "trade_size_pct": 5.0,       # 单笔买入不超过 5%（约 1 万）
+    "take_profit_tiers": [20.0, 30.0],  # 成本 +20% / +30% 各卖 1/3
+    "red_line_pct": -20.0,       # 浮亏 20% 触发减半红线
+    "gold_tiers": [0.0, 10.0],   # 黄金：回本卖出 1/3，+10% 再卖 1/3
+}
+
 _index_cache = {"at": None, "data": None}
 _index_lock = threading.Lock()
 
@@ -728,6 +738,181 @@ def glossary(perf=None, exp=None):
     ]
 
 
+def _gold_position():
+    for h in agent.load_portfolio():
+        if h["类别"] == "黄金" and _num(h["数量"]) > 0:
+            return {
+                "name": h["名称"], "grams": round(_num(h["数量"]), 2),
+                "cost": round(_num(h["成本价"]), 2), "price": round(_num(h["现价"]), 2),
+                "value": round(_num(h["市值"]), 2), "pnl": round(_num(h["盈亏"]), 2),
+            }
+    return None
+
+
+def discipline(perf=None, exp=None):
+    """把她的交易习惯固化成可检查的纪律：止盈档位、卖出红线、补仓门槛"""
+    perf = perf or performance()
+    exp = exp or exposure()
+    total = exp.get("total_value", 0)
+    trend = nav_trend(perf)
+
+    take_profit = []
+    red_lines = []
+    for p in exp.get("positions", []):
+        if p["price"] <= 0 or p["cost"] <= 0 or p["qty"] <= 0:
+            continue
+        ret = p["return_pct"]
+        hit = [t for t in DISCIPLINE["take_profit_tiers"] if ret >= t]
+        if hit:
+            tier = max(hit)
+            qty = _lots(p["qty"] * len(hit) / 3)
+            take_profit.append({
+                "name": p["name"], "return_pct": ret, "tier": tier,
+                "target_price": round(p["cost"] * (1 + tier / 100), 2),
+                "qty": qty, "amount": round(qty * p["price"], 0),
+                "message": (f"{p['name']}：已到 +{tier:.0f}% 止盈档，按纪律累计卖 {len(hit)}/3"
+                            f"（{qty} 股，约 {qty * p['price']:,.0f} 元）"),
+            })
+        if ret <= DISCIPLINE["red_line_pct"]:
+            qty = _lots(p["qty"] / 2)
+            red_lines.append({
+                "name": p["name"], "return_pct": ret,
+                "cut_price": round(p["cost"] * (1 + DISCIPLINE["red_line_pct"] / 100), 2),
+                "qty": qty, "amount": round(qty * p["price"], 0),
+                "message": (f"{p['name']}：浮亏 {ret:.1f}%，触发 {DISCIPLINE['red_line_pct']:.0f}% 红线；"
+                            f"按纪律减半 {qty} 股（约 {qty * p['price']:,.0f} 元）"),
+            })
+
+    gold = _gold_position()
+    gold_tiers = []
+    if gold and gold["cost"] > 0 and gold["price"] > 0:
+        for tier in DISCIPLINE["gold_tiers"]:
+            target = gold["cost"] * (1 + tier / 100)
+            gold_tiers.append({
+                "label": "回本" if tier == 0 else f"+{tier:.0f}%",
+                "price": round(target, 2),
+                "distance_pct": round((target / gold["price"] - 1) * 100, 1),
+                "reached": gold["price"] >= target,
+                "grams": round(gold["grams"] / 3, 2),
+                "amount": round(gold["grams"] / 3 * target, 0),
+            })
+
+    gates = [
+        {"key": "cash", "label": f"现金 ≥{DISCIPLINE['cash_floor_pct']:.0f}%",
+         "ok": exp.get("cash_pct", 0) >= DISCIPLINE["cash_floor_pct"],
+         "current": f"现在 {exp.get('cash_pct', 0):.1f}%"},
+        {"key": "single", "label": f"单票 ≤{DISCIPLINE['single_cap_pct']:.0f}%",
+         "ok": exp.get("top1_pct", 0) <= DISCIPLINE["single_cap_pct"],
+         "current": f"最大 {exp.get('top1_pct', 0):.1f}%"},
+        {"key": "trade_size", "label": f"单笔 ≤{DISCIPLINE['trade_size_pct']:.0f}%",
+         "ok": None, "current": f"约 {total * DISCIPLINE['trade_size_pct'] / 100:,.0f} 元"},
+        {"key": "nav", "label": "净值企稳",
+         "ok": trend.get("stabilized", False),
+         "current": (f"已连续 {trend.get('days_since_low', 0)} 日不创新低、回升 {trend.get('rebound_pct', 0):+.1f}%"
+                     if trend.get("defined") else "快照不足")},
+        {"key": "fundamental", "label": "基本面/消息没变坏",
+         "ok": None, "current": "需要你手动确认"},
+    ]
+    return {
+        "config": DISCIPLINE,
+        "gates": gates,
+        "take_profit": take_profit,
+        "red_lines": red_lines,
+        "gold": gold,
+        "gold_tiers": gold_tiers,
+        "nav": trend,
+        "suggested_max": round(min(total * DISCIPLINE["trade_size_pct"] / 100,
+                                   max(exp.get("cash", 0) - total * DISCIPLINE["cash_floor_pct"] / 100, 0)), 0),
+    }
+
+
+def add_check(name, amount, price=None, fundamentals_ok=False):
+    """补仓前算账：五道门槛 + 补仓后的成本、仓位、现金、再跌 10%/20% 的损失"""
+    holdings = agent.load_portfolio()
+    total = sum(_num(h["市值"]) for h in holdings)
+    cash = sum(_num(h["市值"]) for h in holdings if h["类别"] == "现金")
+    stock = next((h for h in holdings if h["类别"] == "股票" and h["名称"] == name), None)
+    if not stock:
+        raise ValueError("没找到这只股票的持仓")
+    qty_old = _num(stock["数量"])
+    cost_old = _num(stock["成本价"])
+    price = float(price or _num(stock["现价"]))
+    if price <= 0:
+        raise ValueError("现价无效，请先刷新行情")
+    amount = float(amount or 0)
+    if amount <= 0:
+        raise ValueError("请输入补仓金额")
+    if amount > cash:
+        raise ValueError(f"现金只有 {cash:,.0f} 元，不够这笔补仓")
+
+    qty = _lots(amount / price)
+    if qty <= 0:
+        raise ValueError(f"金额不足一手（100 股约需 {price * 100:,.0f} 元）")
+    actual = qty * price
+    new_qty = qty_old + qty
+    new_cost = (qty_old * cost_old + actual) / new_qty
+    new_value = new_qty * price
+    cash_after = cash - actual
+    cash_after_pct = cash_after / total * 100 if total else 0
+    single_pct = new_value / total * 100 if total else 0
+
+    trend = nav_trend()
+    gates = [
+        {"key": "cash", "label": "现金 ≥20%",
+         "ok": cash_after_pct >= DISCIPLINE["cash_floor_pct"],
+         "current": f"补后 {cash_after_pct:.1f}%",
+         "detail": f"补完剩 {cash_after:,.0f} 元，底线 {total * 0.20:,.0f} 元"},
+        {"key": "single", "label": "单票 ≤20%",
+         "ok": single_pct <= DISCIPLINE["single_cap_pct"],
+         "current": f"补后 {single_pct:.1f}%",
+         "detail": f"补完市值 {new_value:,.0f} 元，上限 {total * 0.20:,.0f} 元"},
+        {"key": "trade_size", "label": "单笔 ≤5%",
+         "ok": actual <= total * DISCIPLINE["trade_size_pct"] / 100 + 1,
+         "current": f"这笔 {actual:,.0f} 元",
+         "detail": f"单笔上限 {total * 0.05:,.0f} 元"},
+        {"key": "nav", "label": "净值企稳",
+         "ok": bool(trend.get("stabilized")),
+         "current": ("已企稳" if trend.get("stabilized") else "没企稳"),
+         "detail": _stabilize_status(trend)},
+        {"key": "fundamental", "label": "基本面/消息没变坏",
+         "ok": bool(fundamentals_ok),
+         "current": "已确认" if fundamentals_ok else "未确认",
+         "detail": ("你已勾选确认，请对自己的判断负责" if fundamentals_ok
+                    else "需要你确认：公司业绩、行业逻辑、近期消息没有变坏")},
+    ]
+
+    def drop_loss(drop):
+        return round((price * (1 - drop / 100) - new_cost) * new_qty, 0)
+
+    rise_before = (cost_old / price - 1) * 100 if price < cost_old else 0
+    rise_after = (new_cost / price - 1) * 100 if price < new_cost else 0
+    failed = [g for g in gates if not g["ok"]]
+    return {
+        "name": name,
+        "allowed": not failed,
+        "gates": gates,
+        "failed": [g["label"] for g in failed],
+        "price": round(price, 3),
+        "qty": qty,
+        "amount": round(actual, 0),
+        "qty_old": int(qty_old),
+        "qty_new": int(new_qty),
+        "cost_old": round(cost_old, 3),
+        "cost_new": round(new_cost, 3),
+        "cost_change": round(new_cost - cost_old, 3),
+        "value_new": round(new_value, 0),
+        "single_pct": round(single_pct, 1),
+        "cash_after": round(cash_after, 0),
+        "cash_after_pct": round(cash_after_pct, 1),
+        "drop_10_loss": drop_loss(10),
+        "drop_20_loss": drop_loss(20),
+        "rise_before": round(rise_before, 1),
+        "rise_after": round(rise_after, 1),
+        "fundamentals_ok": bool(fundamentals_ok),
+        "nav": trend,
+    }
+
+
 def snapshot(stocks=None):
     perf = performance()
     attr = attribution()
@@ -744,6 +929,7 @@ def snapshot(stocks=None):
         "health": health(perf, exp),
         "recovery": recovery(),
         "glossary": glossary(perf, exp),
+        "discipline": discipline(perf, exp),
     }
     snap["verdict"] = verdict(snap)
     return snap
