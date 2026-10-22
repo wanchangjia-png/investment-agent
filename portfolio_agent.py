@@ -784,6 +784,34 @@ def _ledger_state(name, account, fallback_qty, fallback_cost):
     return qty, cost, found
 
 
+# A 股默认费率（可在「配置」sheet 覆盖 commission_rate / commission_min）
+COMMISSION_RATE = 0.00025      # 佣金 万 2.5
+COMMISSION_MIN = 5.0           # 单笔最低 5 元
+STAMP_DUTY_RATE = 0.0005       # 印花税 0.05%，仅卖出股票
+TRANSFER_FEE_RATE = 0.00001    # 过户费 0.001%
+
+
+def is_fund_code(name, code):
+    name = (name or "").upper()
+    code = str(code or "")
+    return "ETF" in name or "LOF" in name or code[:2] in ("15", "16", "50", "51", "56", "58")
+
+
+def estimate_trade_fee(direction, qty, price, category="股票", name="", code=""):
+    """按 A 股常规费率估算费用；基金/ETF 免印花税，黄金返回 0 由用户手填"""
+    amount = qty * price
+    if category == "黄金":
+        return {"commission": 0, "stamp": 0, "transfer": 0, "total": 0,
+                "note": "黄金交易费用请手动填写"}
+    fund = is_fund_code(name, code)
+    commission = round(max(amount * COMMISSION_RATE, COMMISSION_MIN), 2)
+    stamp = round(amount * STAMP_DUTY_RATE, 2) if direction == "卖出" and not fund else 0.0
+    transfer = 0.0 if fund else round(amount * TRANSFER_FEE_RATE, 2)
+    total = round(commission + stamp + transfer, 2)
+    return {"commission": commission, "stamp": stamp, "transfer": transfer,
+            "total": total, "amount": round(amount, 2)}
+
+
 def preview_transaction(data):
     direction = str(data.get("direction", "")).strip()
     if direction not in ("买入", "卖出"):
@@ -791,10 +819,11 @@ def preview_transaction(data):
     name = str(data.get("name", "")).strip()
     if not name:
         raise ValueError("请填写资产名称")
+    fee_auto = data.get("fee") in (None, "", "auto")
     try:
         qty = float(data.get("qty") or 0)
         price = float(data.get("price") or 0)
-        fee = float(data.get("fee") or 0)
+        fee = 0.0 if fee_auto else float(data.get("fee") or 0)
     except (TypeError, ValueError):
         raise ValueError("数量、价格和费用必须是数字")
     if qty <= 0 or price <= 0:
@@ -826,6 +855,12 @@ def preview_transaction(data):
     cash = next((h for h in holdings if h["类别"] == "现金" and h["账户"] == account), None)
     cash_before = cash["数量"] if cash else 0
     amount = round(qty * price, 2)
+    fee_breakdown = None
+    if fee_auto:
+        fee_breakdown = estimate_trade_fee(direction, qty, price, category, name, code)
+        fee = fee_breakdown["total"]
+    elif category == "黄金":
+        fee_breakdown = None
     warnings = []
     ledger_qty, ledger_cost, has_ledger = _ledger_state(name, account, qty_before, cost_before)
     if direction == "卖出" and data.get("cost") and not has_ledger:
@@ -874,6 +909,7 @@ def preview_transaction(data):
         "qty_after": round(new_qty, 4), "cost_after": round(new_cost, 3),
         "cash_before": round(cash_before, 2), "cash_after": cash_after,
         "realized": realized, "realized_holdings": realized_holdings, "warnings": warnings,
+        "fee_auto": fee_auto, "fee_breakdown": fee_breakdown,
         "ledger_qty_before": round(ledger_qty, 4), "ledger_cost_before": round(ledger_cost, 3),
         "ledger_qty_after": new_ledger_qty, "ledger_cost_after": new_ledger_cost,
         "can_sync": can_sync,

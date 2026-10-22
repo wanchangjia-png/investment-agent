@@ -279,6 +279,10 @@ tr:hover { background: #f8f9ff; }
 .trade-form .field { margin: 0; display: flex; flex-direction: column; gap: 4px; }
 .trade-form label { font-size: 12px; color: #666; }
 .trade-form input, .trade-form select { padding: 8px 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; font-family: inherit; }
+.trade-form input:disabled { background: #f5f6f8; color: #555; }
+.fee-auto { font-size: 11.5px; color: #2F5496; margin-left: 4px; display: inline-flex; align-items: center; gap: 3px; cursor: pointer; white-space: nowrap; }
+.fee-auto input { width: auto; padding: 0; }
+.fee-hint { font-size: 11px; color: #888; line-height: 1.5; }
 .trade-sync { display: flex; align-items: center; gap: 6px; font-size: 13px; margin-top: 12px; }
 .trade-preview { margin-top: 12px; padding: 12px; border-radius: 10px; background: #f7f8fb; border: 1px solid #e8eaf0; font-size: 13px; line-height: 1.8; }
 .trade-preview .warn { color: #B26A00; }
@@ -694,11 +698,15 @@ tr:hover { background: #f8f9ff; }
             <div class="field"><label>方向</label><select id="trDirection" onchange="onTradeDirectionChange()">
                 <option>买入</option><option>卖出</option>
             </select></div>
-            <div class="field"><label>名称</label><input id="trName" list="stockOptions" placeholder="如 三花智控" onchange="onTradeNameChange()" oninput="invalidateTradePreview()"></div>
-            <div class="field"><label>代码</label><input id="trCode" placeholder="自动带出" oninput="invalidateTradePreview()"></div>
-            <div class="field"><label>数量</label><input type="number" id="trQty" min="0" step="1" oninput="invalidateTradePreview()"></div>
-            <div class="field"><label>成交价</label><input type="number" id="trPrice" min="0" step="0.001" oninput="invalidateTradePreview()"></div>
-            <div class="field"><label>费用</label><input type="number" id="trFee" min="0" step="0.01" value="0" oninput="invalidateTradePreview()"></div>
+            <div class="field"><label>名称</label><input id="trName" list="stockOptions" placeholder="如 三花智控" onchange="onTradeNameChange()" oninput="onTradeInput()"></div>
+            <div class="field"><label>代码</label><input id="trCode" placeholder="自动带出" oninput="onTradeInput()"></div>
+            <div class="field"><label>数量</label><input type="number" id="trQty" min="0" step="1" oninput="onTradeInput()"></div>
+            <div class="field"><label>成交价</label><input type="number" id="trPrice" min="0" step="0.001" oninput="onTradeInput()"></div>
+            <div class="field">
+                <label>费用 <span class="fee-auto"><input type="checkbox" id="trFeeAuto" checked onchange="onFeeAutoChange()"> 自动算</span></label>
+                <input type="number" id="trFee" min="0" step="0.01" value="0" disabled oninput="invalidateTradePreview()">
+                <div id="trFeeHint" class="fee-hint"></div>
+            </div>
             <div class="field"><label>账户</label><select id="trAccount" onchange="invalidateTradePreview()">
                 <option>A股主账户</option><option>账户二（短线）</option>
             </select></div>
@@ -2915,7 +2923,10 @@ function showTradeModal() {
     document.getElementById("trCode").value = "";
     document.getElementById("trQty").value = "";
     document.getElementById("trPrice").value = "";
+    document.getElementById("trFeeAuto").checked = true;
+    document.getElementById("trFee").disabled = true;
     document.getElementById("trFee").value = "0";
+    document.getElementById("trFeeHint").textContent = "填数量和成交价后自动算";
     document.getElementById("trAccount").value = "A股主账户";
     document.getElementById("trNote").value = "";
     document.getElementById("trSync").checked = true;
@@ -2938,10 +2949,61 @@ function onTradeNameChange() {
         document.getElementById("trCode").value = s.code || "";
         if (s.account) document.getElementById("trAccount").value = s.account;
     }
+    updateFeeEstimate();
     invalidateTradePreview();
 }
 
-function onTradeDirectionChange() { invalidateTradePreview(); }
+function onTradeDirectionChange() { updateFeeEstimate(); invalidateTradePreview(); }
+
+function onTradeInput() { updateFeeEstimate(); invalidateTradePreview(); }
+
+function feeAutoOn() { return document.getElementById("trFeeAuto").checked; }
+
+function onFeeAutoChange() {
+    const auto = feeAutoOn();
+    document.getElementById("trFee").disabled = auto;
+    if (auto) updateFeeEstimate();
+    else document.getElementById("trFeeHint").textContent = "手动填写，请按券商实际扣费";
+    invalidateTradePreview();
+}
+
+function isFundName(name, code) {
+    const n = (name || "").toUpperCase();
+    const c = String(code || "");
+    return n.includes("ETF") || n.includes("LOF") || ["15", "16", "50", "51", "56", "58"].includes(c.slice(0, 2));
+}
+
+function updateFeeEstimate() {
+    if (!feeAutoOn()) return;
+    const hint = document.getElementById("trFeeHint");
+    const feeEl = document.getElementById("trFee");
+    const qty = parseFloat(document.getElementById("trQty").value || 0);
+    const price = parseFloat(document.getElementById("trPrice").value || 0);
+    const dir = document.getElementById("trDirection").value;
+    const name = document.getElementById("trName").value.trim();
+    const code = document.getElementById("trCode").value.trim();
+    if (name.includes("黄金")) {
+        feeEl.value = "0";
+        hint.textContent = "黄金交易请关掉「自动算」后手动填写费用";
+        return;
+    }
+    if (!(qty > 0 && price > 0)) {
+        feeEl.value = "0";
+        hint.textContent = "填数量和成交价后自动算";
+        return;
+    }
+    const amount = qty * price;
+    const fund = isFundName(name, code);
+    const commission = Math.max(amount * 0.00025, 5);
+    const stamp = dir === "卖出" && !fund ? amount * 0.0005 : 0;
+    const transfer = fund ? 0 : amount * 0.00001;
+    const total = commission + stamp + transfer;
+    feeEl.value = total.toFixed(2);
+    hint.textContent = `佣金 ${commission.toFixed(2)}`
+        + (transfer ? ` + 过户费 ${transfer.toFixed(2)}` : "")
+        + (stamp ? ` + 印花税 ${stamp.toFixed(2)}` : (fund ? "（ETF 免印花税、免过户费）" : "（买入不收印花税）"))
+        + ` = ${total.toFixed(2)} 元`;
+}
 
 function invalidateTradePreview() {
     tradePreview = null;
@@ -2960,7 +3022,7 @@ function tradeFormData() {
         code: document.getElementById("trCode").value.trim(),
         qty: parseFloat(document.getElementById("trQty").value || 0),
         price: parseFloat(document.getElementById("trPrice").value || 0),
-        fee: parseFloat(document.getElementById("trFee").value || 0),
+        fee: feeAutoOn() ? null : parseFloat(document.getElementById("trFee").value || 0),
         account: document.getElementById("trAccount").value,
         note: document.getElementById("trNote").value.trim(),
         sync: document.getElementById("trSync").checked,
@@ -2977,7 +3039,17 @@ function renderTradePreview(p, data) {
     const box = document.getElementById("trPreview");
     const money = v => Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
     const rows = [];
-    rows.push(`<div><b>${p.direction} ${escapeHtml(p.name)}</b> ${money(p.qty)} 股 @ ${Number(p.price).toFixed(3)}，成交额 ${money(p.amount)}${p.fee ? `，费用 ${money(p.fee)}` : ""}</div>`);
+    rows.push(`<div><b>${p.direction} ${escapeHtml(p.name)}</b> ${money(p.qty)} 股 @ ${Number(p.price).toFixed(3)}，成交额 ${money(p.amount)}</div>`);
+    const fb = p.fee_breakdown;
+    if (fb && p.fee) {
+        const parts = [`佣金 ${money(fb.commission)}`];
+        if (fb.transfer) parts.push(`过户费 ${money(fb.transfer)}`);
+        if (fb.stamp) parts.push(`印花税 ${money(fb.stamp)}`);
+        else if (!fb.transfer) parts.push("ETF 免印花税和过户费");
+        rows.push(`<div>费用 ${money(p.fee)} 元（${parts.join(" + ")}）</div>`);
+    } else if (p.fee) {
+        rows.push(`<div>费用 ${money(p.fee)} 元（手动填写）</div>`);
+    }
     if (p.direction === "卖出") {
         rows.push(`<div>本笔实现盈亏（真实成本 ${Number(p.ledger_cost_before).toFixed(3)}）：<b style="color:${p.realized >= 0 ? "#CC0000" : "#009900"}">${p.realized >= 0 ? "+" : ""}${money(p.realized)}</b></div>`);
     }

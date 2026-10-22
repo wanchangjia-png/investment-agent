@@ -606,6 +606,7 @@ def api_data():
                 today_pnl = round((price - prev_close) * qty, 2) if prev_close > 0 and qty > 0 else 0
             stocks.append({
                 "name": h["名称"],
+                "code": h["代码"],
                 "account": h["账户"],
                 "price": price,
                 "cost": h["成本价"],
