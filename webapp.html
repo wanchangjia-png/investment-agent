@@ -172,6 +172,29 @@ tr:hover { background: #f8f9ff; }
 .status-skip { background: #fff4e5; color: #A67C00; }
 .cleared-tag { font-size: 10px; color: #fff; background: #b0b0b0; border-radius: 3px; padding: 1px 4px; margin-left: 3px; vertical-align: middle; }
 
+/* 日历 / 公告 / 卖出计划 / 不动日 */
+.quiet-banner { margin-top: 10px; padding: 9px 12px; border-radius: 9px; background: #eef8f0;
+    border: 1px solid #cfe8d6; color: #2E7D32; font-size: 12.5px; line-height: 1.6;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.quiet-banner .reason { color: #527a5a; }
+.event-date { font-weight: 600; color: #2F5496; white-space: nowrap; }
+.event-tag { font-size: 11px; padding: 1px 7px; border-radius: 8px; background: #eef3ff; color: #2F5496; white-space: nowrap; }
+.event-tag.unlock { background: #fff4e5; color: #A67C00; }
+.event-tag.dividend { background: #eef8f0; color: #2E7D32; }
+.event-tag.manual { background: #f2f0fa; color: #5b4b9a; }
+.event-days { font-size: 11px; color: #999; white-space: nowrap; }
+.ann-item { padding: 8px 10px; border-bottom: 1px solid #f0f2f6; font-size: 12.5px; line-height: 1.6; }
+.ann-item:last-child { border-bottom: none; }
+.ann-item a { color: #2F5496; text-decoration: none; }
+.ann-item a:hover { text-decoration: underline; }
+.risk-tag { font-size: 10.5px; padding: 1px 6px; border-radius: 6px; background: #fff0f0; color: #CC0000; margin-left: 4px; white-space: nowrap; }
+.ann-date { color: #999; font-size: 11.5px; margin-right: 6px; }
+.ann-name { color: #555; margin-right: 6px; }
+.sp-form { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+.sp-form input, .sp-form select { padding: 6px 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; font-family: inherit; }
+.sp-summary { font-size: 12px; color: #666; margin-bottom: 8px; display: flex; gap: 14px; flex-wrap: wrap; }
+.sp-summary b { color: #1a2b4a; }
+
 .verdict-card { border-radius: 14px; padding: 18px 20px; margin-bottom: 14px; border: 1px solid #e8ecf5;
     background: linear-gradient(135deg, #f8fafc, #eef3fb); }
 .verdict-card.warning { background: linear-gradient(135deg, #fff7f7, #ffecec); border-color: #f0caca; }
@@ -272,7 +295,8 @@ tr:hover { background: #f8f9ff; }
 .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
     background: rgba(0,0,0,0.4); z-index: 1000; align-items: center; justify-content: center; }
 .modal-overlay.show { display: flex; }
-.modal { background: #fff; border-radius: 14px; padding: 30px; width: 460px; max-width: 90vw; box-shadow: 0 8px 32px rgba(0,0,0,0.15); }
+.modal { background: #fff; border-radius: 14px; padding: 30px; width: 460px; max-width: 90vw;
+    max-height: 92vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.15); }
 .modal h2 { font-size: 18px; color: #2F5496; margin-bottom: 16px; }
 .modal .field { margin-bottom: 14px; }
 .holdings-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
@@ -408,6 +432,7 @@ tr:hover { background: #f8f9ff; }
                 <button class="tab-btn active" data-tab="today" onclick="switchTab('today',this)">☀️ 今日</button>
                 <button class="tab-btn" data-tab="holdings" onclick="switchTab('holdings',this)">📋 持仓</button>
                 <button class="tab-btn" data-tab="risks" onclick="switchTab('risks',this)">🧭 诊断</button>
+                <button class="tab-btn" data-tab="calendar" onclick="switchTab('calendar',this)">📅 日历</button>
                 <button class="tab-btn" data-tab="decisions" onclick="switchTab('decisions',this)">🗂 决策</button>
                 <button class="tab-btn" data-tab="breakeven" onclick="switchTab('breakeven',this)">🎯 回本明细</button>
                 <button class="tab-btn" data-tab="cleared" onclick="switchTab('cleared',this)">📁 已清仓</button>
@@ -420,6 +445,7 @@ tr:hover { background: #f8f9ff; }
                     <div class="verdict-headline" id="verdictHeadline"><span class="spinner"></span> 正在判断今天该不该动手…</div>
                     <div class="verdict-reasons" id="verdictReasons"></div>
                     <div class="verdict-triggers" id="verdictTriggers"></div>
+                    <div id="quietBanner" class="quiet-banner" style="display:none;"></div>
                     <details class="verdict-glossary">
                         <summary>这些词是什么意思？（净值企稳、1/3 仓位、试买 5%…）</summary>
                         <div id="glossaryList"></div>
@@ -462,6 +488,7 @@ tr:hover { background: #f8f9ff; }
                     <div id="disciplineAlerts" class="discipline-alerts"></div>
                     <div class="discipline-actions">
                         <button class="btn btn-primary btn-sm" onclick="showAddCheck()">🧮 补仓算账</button>
+                        <button class="btn btn-outline btn-sm" id="quietBtn" onclick="toggleQuietDay()">🌿 今天不动</button>
                         <span id="disciplineMax" class="discipline-max"></span>
                     </div>
                 </div>
@@ -532,6 +559,42 @@ tr:hover { background: #f8f9ff; }
                     <h4>⏱ 机会成本：同期如果买沪深300</h4>
                     <div id="opportunityBox"><div style="font-size:12px;color:#999;">加载中…</div></div>
                 </div>
+                <div class="panel" style="margin-top:14px;">
+                    <h4 style="display:flex;justify-content:space-between;align-items:center;">
+                        <span>🔔 持仓公告（近 30 天） <span class="badge" id="annBadge">…</span></span>
+                        <button class="btn btn-sm btn-outline" onclick="loadAnnouncements(true)">刷新</button>
+                    </h4>
+                    <div id="annBody"><div style="font-size:12px;color:#999;">加载中…</div></div>
+                </div>
+            </div>
+
+            <div class="tab-content" id="tabCalendar">
+                <div class="holdings-toolbar">
+                    <button class="btn btn-sm btn-outline" onclick="loadCalendar(true)">🔄 刷新公司事件</button>
+                    <span id="calendarUpdated">正在从东方财富读取财报、解禁、分红日期…</span>
+                </div>
+                <div class="panel">
+                    <h4>未来 120 天</h4>
+                    <div class="table-wrap" style="max-height:420px;"><table><thead><tr>
+                        <th>日期</th><th>剩余</th><th>标的</th><th>类型</th><th>说明</th><th>来源</th><th>操作</th>
+                    </tr></thead><tbody id="calendarBody"></tbody></table></div>
+                    <div id="calendarEmpty" class="empty-state" style="display:none;"><div class="icon">📅</div><div>未来 120 天没有已知事件</div></div>
+                </div>
+                <div class="panel" style="margin-top:14px;">
+                    <h4>手动添加事件</h4>
+                    <div class="sp-form">
+                        <input type="date" id="calDate">
+                        <input id="calCode" placeholder="代码（可选）" style="width:110px;">
+                        <input id="calName" list="stockOptions" placeholder="名称" style="width:110px;">
+                        <select id="calType">
+                            <option>股东大会</option><option>财报</option><option>解禁</option>
+                            <option>除权除息</option><option>其他</option>
+                        </select>
+                        <input id="calNote" placeholder="说明" style="width:180px;">
+                        <button class="btn btn-sm btn-outline" onclick="addManualEvent()">添加</button>
+                    </div>
+                    <div style="font-size:12px;color:#999;margin-top:6px;">自动事件按持仓代码拉取；手工事件适合记股东大会、自己关注的公告日等。</div>
+                </div>
             </div>
 
             <div class="tab-content" id="tabHistory"><div class="history-table" id="historyContainer"></div>
@@ -578,6 +641,28 @@ tr:hover { background: #f8f9ff; }
                         <th>日期</th><th>名称</th><th>类型</th><th class="num">金额</th><th>来源</th><th>操作</th>
                     </tr></thead><tbody id="caBody"></tbody></table></div>
                     <div id="caEmpty" class="empty-state" style="display:none;"><div class="icon">💰</div><div>暂无分红记录</div></div>
+                </div>
+                <div class="panel" style="margin-top:14px;">
+                    <h4>💵 卖出资金去向</h4>
+                    <div class="sp-summary" id="spSummary"></div>
+                    <div class="sp-form">
+                        <input type="date" id="spDate">
+                        <input id="spCode" placeholder="代码" style="width:80px;">
+                        <input id="spName" list="stockOptions" placeholder="卖出标的" style="width:110px;">
+                        <input id="spAmount" type="number" step="0.01" placeholder="卖出金额" style="width:110px;">
+                        <select id="spPurpose">
+                            <option>暂存现金</option><option>再买入</option><option>转出</option><option>还贷</option><option>其他</option>
+                        </select>
+                        <input id="spTarget" list="stockOptions" placeholder="再买入标的（可选）" style="width:130px;">
+                        <input type="date" id="spPlanDate" title="计划执行日">
+                        <input id="spNote" placeholder="备注" style="width:120px;">
+                        <button class="btn btn-sm btn-outline" onclick="addSellPlan()">记录计划</button>
+                    </div>
+                    <div class="table-wrap" style="max-height:300px;"><table><thead><tr>
+                        <th>卖出日</th><th>标的</th><th class="num">金额</th><th>用途</th><th>目标 / 计划日</th><th>状态</th><th>操作</th>
+                    </tr></thead><tbody id="spBody"></tbody></table></div>
+                    <div id="spEmpty" class="empty-state" style="display:none;"><div class="icon">💵</div><div>还没有卖出计划</div></div>
+                    <div id="spUnplanned" style="margin-top:12px;"></div>
                 </div>
                 <p style="font-size:12px;color:#999;margin-top:12px;">实现盈亏按真实成本计算，与持仓页的摊薄成本口径不同；只统计卖出。分红按金额计入累计盈亏。</p>
             </div>
@@ -673,6 +758,29 @@ tr:hover { background: #f8f9ff; }
                 • DeepSeek: <a href="https://platform.deepseek.com/api_keys" target="_blank">platform.deepseek.com</a>
                 <br>• OpenAI: <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com</a>
             </div>
+        </div>
+
+        <div style="margin-top:16px;padding-top:14px;border-top:1px solid #eee;">
+            <label style="display:block;font-size:13px;color:#555;margin-bottom:8px;font-weight:500;">交易费率（记交易时自动算费用）</label>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <div class="field">
+                    <label>佣金（万分之）</label>
+                    <input type="number" step="0.01" id="feeCommissionRate" placeholder="2.5">
+                </div>
+                <div class="field">
+                    <label>最低佣金（元）</label>
+                    <input type="number" step="0.01" id="feeCommissionMin" placeholder="5">
+                </div>
+                <div class="field">
+                    <label>印花税（% ，仅卖出股票）</label>
+                    <input type="number" step="0.001" id="feeStampRate" placeholder="0.05">
+                </div>
+                <div class="field">
+                    <label>过户费（%）</label>
+                    <input type="number" step="0.001" id="feeTransferRate" placeholder="0.001">
+                </div>
+            </div>
+            <div class="hint">按你券商的费率填；ETF 免印花税和过户费。</div>
         </div>
 
         <div class="modal-actions">
@@ -1280,9 +1388,10 @@ function switchTab(name, btn) {
     // 按需加载数据
     if (name === "breakeven") loadBreakeven();
     if (name === "cleared") renderCleared();
-    if (name === "transactions") { loadTransactions(); loadCorporateActions(); }
-    if (name === "today") { loadToday(); loadMarketView(); }
-    if (name === "risks") loadInsights();
+    if (name === "transactions") { loadTransactions(); loadCorporateActions(); loadSellPlans(); }
+    if (name === "today") { loadToday(); loadMarketView(); loadQuietDays(); }
+    if (name === "risks") { loadInsights(); loadAnnouncements(); }
+    if (name === "calendar") loadCalendar();
     if (name === "decisions") loadDecisions();
 }
 
@@ -1448,6 +1557,12 @@ async function showSettings() {
         const sel = document.getElementById("selModel");
         for (let opt of sel.options) { if (opt.value === cfg.model) { sel.value = cfg.model; break; } }
         updateModelHint();
+        const fees = cfg.fees || {};
+        const num = (v, mul) => v === undefined ? "" : String(+(v * mul).toFixed(6));
+        document.getElementById("feeCommissionRate").value = num(fees.commission_rate, 10000);
+        document.getElementById("feeCommissionMin").value = num(fees.commission_min, 1);
+        document.getElementById("feeStampRate").value = num(fees.stamp_rate, 100);
+        document.getElementById("feeTransferRate").value = num(fees.transfer_rate, 100);
     } catch(e) {}
 }
 
@@ -1463,6 +1578,22 @@ async function saveSettings() {
     }
     await fetch("/api/save-config", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({key:"provider",value:provider})});
     await fetch("/api/save-config", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({key:"model",value:model})});
+
+    const feeFields = [
+        ["feeCommissionRate", "commission_rate", 0.0001],
+        ["feeCommissionMin", "commission_min", 1],
+        ["feeStampRate", "stamp_rate", 0.01],
+        ["feeTransferRate", "transfer_rate", 0.01],
+    ];
+    for (const [id, key, mul] of feeFields) {
+        const raw = document.getElementById(id).value.trim();
+        if (raw === "") continue;
+        const value = parseFloat(raw);
+        if (isNaN(value) || value < 0) { alert("费率必须是非负数字"); return; }
+        const res = await fetch("/api/save-config", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({key, value: value * mul})});
+        const d = await res.json();
+        if (!d.success) { alert(d.error || "费率保存失败"); return; }
+    }
 
     // 更新 badge
     document.getElementById("modelBadge").textContent = model;
@@ -3459,11 +3590,264 @@ async function deleteCorporateAction(i) {
     loadData();
 }
 
+// ============ 持仓日历 ============
+async function loadCalendar(force) {
+    const updated = document.getElementById("calendarUpdated");
+    if (updated) updated.textContent = force ? "正在刷新公司事件…" : "正在读取…";
+    try {
+        const res = await fetch("/api/calendar" + (force ? "?force=1" : ""));
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        renderCalendar(d);
+    } catch (e) {
+        if (updated) updated.textContent = "公司事件加载失败：" + e.message;
+    }
+}
+
+function renderCalendar(d) {
+    const events = d.events || [];
+    state.calendar = events;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const typeClass = t => t === "解禁" ? "unlock" : (t === "除权除息" ? "dividend" : (t === "股东大会" ? "manual" : ""));
+    document.getElementById("calendarBody").innerHTML = events.map((e, i) => {
+        const dt = new Date(e.date + "T00:00:00");
+        const days = Math.round((dt - today) / 86400000);
+        const left = isNaN(days) ? "-" : (days < 0 ? `已过 ${-days} 天` : (days === 0 ? "今天" : `${days} 天`));
+        return `<tr>
+            <td class="event-date">${escapeHtml(e.date)}</td>
+            <td class="event-days">${left}</td>
+            <td>${escapeHtml(e.name || e.code || "—")}</td>
+            <td><span class="event-tag ${typeClass(e.type)}">${escapeHtml(e.type || "事件")}</span></td>
+            <td style="font-size:12px;">${escapeHtml(e.detail || "")}</td>
+            <td style="font-size:11px;color:#999;">${escapeHtml(e.source || "")}</td>
+            <td>${e.source === "手工" ? `<button class="btn btn-sm btn-outline" onclick="deleteManualEvent(${i})">删</button>` : ""}</td>
+        </tr>`;
+    }).join("");
+    document.getElementById("calendarEmpty").style.display = events.length ? "none" : "block";
+    document.getElementById("calendarUpdated").textContent =
+        `更新于 ${d.fetched_at || "—"} · 覆盖 ${d.stocks || 0} 只持仓`;
+}
+
+async function addManualEvent() {
+    const date = document.getElementById("calDate").value;
+    if (!date) { alert("请选择日期"); return; }
+    const payload = {
+        action: "create", date,
+        code: document.getElementById("calCode").value.trim(),
+        name: document.getElementById("calName").value.trim(),
+        type: document.getElementById("calType").value,
+        detail: document.getElementById("calNote").value.trim(),
+    };
+    const d = await fetch("/api/calendar", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)}).then(r=>r.json());
+    if (!d.success) { alert(d.error || "添加失败"); return; }
+    ["calDate","calCode","calName","calNote"].forEach(id => document.getElementById(id).value = "");
+    renderCalendar(d);
+}
+
+async function deleteManualEvent(i) {
+    const e = (state.calendar || [])[i];
+    if (!e || !e.row || !confirm(`删除 ${e.date} ${e.name || ""} ${e.type}？`)) return;
+    const d = await fetch("/api/calendar", {method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({action:"delete", row:e.row, confirm:true})}).then(r=>r.json());
+    if (!d.success) { alert(d.error || "删除失败"); return; }
+    renderCalendar(d);
+}
+
+// ============ 公告监控 ============
+async function loadAnnouncements(force) {
+    const body = document.getElementById("annBody");
+    if (!body) return;
+    if (!state.announcements || force) body.innerHTML = '<span class="spinner"></span> 正在读取持仓公告…';
+    try {
+        const res = await fetch("/api/announcements" + (force ? "?force=1" : ""));
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        state.announcements = d;
+        renderAnnouncements(d);
+    } catch (e) {
+        body.textContent = "公告加载失败：" + e.message;
+    }
+}
+
+function renderAnnouncements(d) {
+    const items = (d.items || []).slice().sort((a, b) => (b.risk.length ? 1 : 0) - (a.risk.length ? 1 : 0) || b.date.localeCompare(a.date));
+    const badge = document.getElementById("annBadge");
+    if (badge) badge.textContent = `风险 ${d.risk_count || 0} 条 / 共 ${items.length} 条`;
+    const body = document.getElementById("annBody");
+    if (!items.length) { body.innerHTML = '<div style="font-size:12px;color:#999;">近 30 天没有公告</div>'; return; }
+    body.innerHTML = items.map(a => `<div class="ann-item" style="${a.risk.length ? 'background:#fffafa;border-left:3px solid #CC0000;padding-left:10px;' : ''}">
+        <span class="ann-date">${escapeHtml(a.date)}</span><span class="ann-name">${escapeHtml(a.name)}</span>
+        <a href="${escapeHtml(a.url)}" target="_blank" rel="noopener">${escapeHtml(a.title)}</a>
+        ${a.risk.map(t => `<span class="risk-tag">${escapeHtml(t)}</span>`).join("")}
+    </div>`).join("");
+}
+
+// ============ 卖出资金去向 ============
+const SELL_PURPOSES = ["暂存现金", "再买入", "转出", "还贷", "其他"];
+const SELL_STATUS = ["待执行", "已执行", "已取消"];
+
+async function loadSellPlans() {
+    try {
+        const d = await fetch("/api/sell-plans").then(r => r.json());
+        if (d.error) throw new Error(d.error);
+        renderSellPlans(d);
+    } catch (e) {
+        const body = document.getElementById("spBody");
+        if (body) body.innerHTML = "";
+    }
+}
+
+function renderSellPlans(d) {
+    state.sellPlans = d.plans || [];
+    state.unplannedSells = d.unplanned || [];
+    const summary = document.getElementById("spSummary");
+    if (summary) summary.innerHTML =
+        `<span>现金可用 <b>${Number(d.cash || 0).toLocaleString()}</b> 元</span>` +
+        `<span>计划再买入 <b>${Number(d.planned_rebuy || 0).toLocaleString()}</b> 元</span>` +
+        `<span>未规划卖出 <b>${(d.unplanned || []).length}</b> 笔</span>`;
+    const rows = d.plans || [];
+    document.getElementById("spBody").innerHTML = rows.map((p, i) => `<tr>
+        <td style="font-size:11px;color:#888;">${escapeHtml(p.date)}</td>
+        <td>${escapeHtml(p.name || p.code || "—")}</td>
+        <td class="num">${Number(p.amount || 0).toLocaleString()}</td>
+        <td><select id="spPurpose-${i}" style="padding:4px 6px;border:1px solid #ddd;border-radius:6px;font-size:12px;">
+            ${SELL_PURPOSES.map(x => `<option ${x === p.purpose ? "selected" : ""}>${x}</option>`).join("")}
+        </select></td>
+        <td style="min-width:190px;">
+            <input id="spTarget-${i}" list="stockOptions" value="${escapeHtml(p.target || "")}" placeholder="目标" style="width:100px;padding:4px 6px;border:1px solid #ddd;border-radius:6px;font-size:12px;">
+            <input type="date" id="spPlanDate-${i}" value="${escapeHtml(p.plan_date || "")}" style="padding:4px 6px;border:1px solid #ddd;border-radius:6px;font-size:12px;">
+        </td>
+        <td><select id="spStatus-${i}" style="padding:4px 6px;border:1px solid #ddd;border-radius:6px;font-size:12px;">
+            ${SELL_STATUS.map(x => `<option ${x === p.status ? "selected" : ""}>${x}</option>`).join("")}
+        </select></td>
+        <td style="white-space:nowrap;">
+            <button class="btn btn-sm btn-outline" onclick="saveSellPlan(${i})">存</button>
+            <button class="btn btn-sm btn-outline" onclick="deleteSellPlan(${i})">删</button>
+        </td>
+    </tr>`).join("");
+    document.getElementById("spEmpty").style.display = rows.length ? "none" : "block";
+
+    const un = d.unplanned || [];
+    const box = document.getElementById("spUnplanned");
+    if (!un.length) { box.innerHTML = ""; return; }
+    box.innerHTML = `<div style="font-size:12.5px;color:#888;margin-bottom:6px;">近 60 天卖出但还没规划去向：</div>` +
+        un.map((s, i) => `<div class="alert-item" style="align-items:center;">
+            <span>${escapeHtml(s.date)} ${escapeHtml(s.name)} <b>${Number(s.amount || 0).toLocaleString()}</b> 元</span>
+            <button class="btn btn-sm btn-outline" onclick="fillSellPlan(${i})">填计划</button>
+        </div>`).join("");
+}
+
+function fillSellPlan(i) {
+    const s = (state.unplannedSells || [])[i];
+    if (!s) return;
+    document.getElementById("spDate").value = s.date || "";
+    document.getElementById("spCode").value = s.code || "";
+    document.getElementById("spName").value = s.name || "";
+    document.getElementById("spAmount").value = s.amount || "";
+    document.getElementById("spPurpose").focus();
+}
+
+async function addSellPlan() {
+    const name = document.getElementById("spName").value.trim();
+    const amount = parseFloat(document.getElementById("spAmount").value);
+    if (!name) { alert("请填写卖出标的"); return; }
+    if (!amount || isNaN(amount)) { alert("请填写卖出金额"); return; }
+    const payload = {
+        action: "create", date: document.getElementById("spDate").value || undefined,
+        code: document.getElementById("spCode").value.trim(), name, amount,
+        purpose: document.getElementById("spPurpose").value,
+        target: document.getElementById("spTarget").value.trim(),
+        plan_date: document.getElementById("spPlanDate").value || undefined,
+        note: document.getElementById("spNote").value.trim(),
+    };
+    const d = await fetch("/api/sell-plans", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)}).then(r=>r.json());
+    if (!d.success) { alert(d.error || "保存失败"); return; }
+    ["spDate","spCode","spName","spAmount","spTarget","spPlanDate","spNote"].forEach(id => document.getElementById(id).value = "");
+    renderSellPlans(d);
+}
+
+async function saveSellPlan(i) {
+    const p = (state.sellPlans || [])[i];
+    if (!p) return;
+    const payload = {
+        action: "update", row: p.row,
+        purpose: document.getElementById(`spPurpose-${i}`).value,
+        target: document.getElementById(`spTarget-${i}`).value.trim(),
+        plan_date: document.getElementById(`spPlanDate-${i}`).value,
+        status: document.getElementById(`spStatus-${i}`).value,
+    };
+    const d = await fetch("/api/sell-plans", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)}).then(r=>r.json());
+    if (!d.success) { alert(d.error || "保存失败"); return; }
+    renderSellPlans(d);
+}
+
+async function deleteSellPlan(i) {
+    const p = (state.sellPlans || [])[i];
+    if (!p || !confirm(`删除 ${p.date} ${p.name} 的卖出计划？`)) return;
+    const d = await fetch("/api/sell-plans", {method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({action:"delete", row:p.row, confirm:true})}).then(r=>r.json());
+    if (!d.success) { alert(d.error || "删除失败"); return; }
+    renderSellPlans(d);
+}
+
+// ============ 不动日 ============
+let quietSeq = 0;
+async function loadQuietDays() {
+    const seq = ++quietSeq;
+    try {
+        const d = await fetch("/api/quiet-days").then(r => r.json());
+        if (seq !== quietSeq) return;  // 已被增删操作覆盖，丢弃过期响应
+        if (d.error) throw new Error(d.error);
+        state.quiet = d;
+        renderQuiet(d);
+    } catch (e) {}
+}
+
+function renderQuiet(d) {
+    const banner = document.getElementById("quietBanner");
+    const btn = document.getElementById("quietBtn");
+    if (!banner) return;
+    if (d.active) {
+        const row = (d.days || []).find(x => x.date === d.today) || {};
+        banner.style.display = "flex";
+        banner.innerHTML = `<span>🌿 今天已设为不动日</span>` +
+            `<span class="reason">${escapeHtml(row.reason || "今天不动")}</span>` +
+            `<span style="font-size:11px;color:#7a9a82;">近 30 天已记 ${d.last30 || 0} 天不动</span>` +
+            `<button class="btn btn-sm btn-outline" onclick="toggleQuietDay()">取消</button>`;
+        if (btn) btn.textContent = "🌿 取消不动日";
+    } else {
+        banner.style.display = "none";
+        banner.innerHTML = "";
+        if (btn) btn.textContent = "🌿 今天不动";
+    }
+}
+
+async function toggleQuietDay() {
+    quietSeq++;  // 作废还没回来的加载请求
+    const d = state.quiet || {};
+    if (d.active) {
+        const row = (d.days || []).find(x => x.date === d.today);
+        if (!row || !confirm("取消今天的不动日？")) return;
+        const res = await fetch("/api/quiet-days", {method:"POST", headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({action:"delete", row:row.row, confirm:true})}).then(r=>r.json());
+        if (!res.success) { alert(res.error || "取消失败"); return; }
+        state.quiet = res; renderQuiet(res);
+        return;
+    }
+    const reason = prompt("今天不动的理由（例如：等回踩、外出、心态不稳）", "等回踩");
+    if (reason === null) return;
+    const res = await fetch("/api/quiet-days", {method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({action:"create", date:d.today, reason})}).then(r=>r.json());
+    if (!res.success) { alert(res.error || "记录失败"); return; }
+    state.quiet = res; renderQuiet(res);
+}
+
 // ============ 初始化 ============
 // 先用已保存的数据渲染，行情只在点「刷新」时拉取
 loadData();
 loadToday();
 loadMarketView();
+loadQuietDays();
 
 // 加载聊天历史（没有历史则显示默认问候）
 if (!loadChatHistory()) {

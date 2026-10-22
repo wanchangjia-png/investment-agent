@@ -991,11 +991,69 @@ def _ledger_state(name, account, fallback_qty, fallback_cost):
     return qty, cost, found
 
 
-# A 股默认费率（可在「配置」sheet 覆盖 commission_rate / commission_min）
-COMMISSION_RATE = 0.00025      # 佣金 万 2.5
-COMMISSION_MIN = 5.0           # 单笔最低 5 元
-STAMP_DUTY_RATE = 0.0005       # 印花税 0.05%，仅卖出股票
-TRANSFER_FEE_RATE = 0.00001    # 过户费 0.001%
+# A 股默认费率（可在「配置」sheet 覆盖）
+TRADE_FEE_DEFAULTS = {
+    "commission_rate": 0.00025,   # 佣金 万 2.5
+    "commission_min": 5.0,        # 单笔最低佣金
+    "stamp_rate": 0.0005,         # 印花税 0.05%，仅卖出股票
+    "transfer_rate": 0.00001,     # 过户费 0.001%
+}
+_trade_fee_cfg = None
+_trade_fee_cfg_mtime = 0.0
+
+
+def load_trade_fee_config(force=False):
+    """费率从「配置」sheet 读取；按文件 mtime 缓存，改完成本立即生效"""
+    global _trade_fee_cfg, _trade_fee_cfg_mtime
+    try:
+        mtime = EXCEL_PATH.stat().st_mtime
+    except OSError:
+        return dict(TRADE_FEE_DEFAULTS)
+    if not force and _trade_fee_cfg is not None and mtime == _trade_fee_cfg_mtime:
+        return dict(_trade_fee_cfg)
+    cfg = dict(TRADE_FEE_DEFAULTS)
+    try:
+        wb = openpyxl.load_workbook(EXCEL_PATH, read_only=True)
+        if "配置" in wb.sheetnames:
+            for row in wb["配置"].iter_rows(min_row=2, max_col=2, values_only=True):
+                key = str(row[0] or "").strip()
+                if key not in cfg or row[1] in (None, ""):
+                    continue
+                try:
+                    value = float(row[1])
+                except (TypeError, ValueError):
+                    continue
+                if value >= 0:
+                    cfg[key] = value
+        wb.close()
+    except Exception:
+        pass
+    _trade_fee_cfg, _trade_fee_cfg_mtime = cfg, mtime
+    return dict(cfg)
+
+
+def update_trade_fee_config(values):
+    cfg = load_trade_fee_config(force=True)
+    for key, value in values.items():
+        if key in cfg:
+            cfg[key] = float(value)
+    wb = openpyxl.load_workbook(EXCEL_PATH)
+    if "配置" not in wb.sheetnames:
+        wb.create_sheet("配置")
+    ws = wb["配置"]
+    existing = {}
+    for row in ws.iter_rows(min_row=2, max_col=2):
+        if row[0].value:
+            existing[str(row[0].value).strip()] = row[0]
+    for key, value in cfg.items():
+        if key in existing:
+            ws.cell(existing[key].row, 2, value)
+        else:
+            ws.append([key, value])
+    save_workbook(wb)
+    wb.close()
+    load_trade_fee_config(force=True)
+    return cfg
 
 
 def is_fund_code(name, code):
@@ -1005,15 +1063,16 @@ def is_fund_code(name, code):
 
 
 def estimate_trade_fee(direction, qty, price, category="股票", name="", code=""):
-    """按 A 股常规费率估算费用；基金/ETF 免印花税，黄金返回 0 由用户手填"""
+    """按配置的费率估算费用；基金/ETF 免印花税，黄金返回 0 由用户手填"""
     amount = qty * price
     if category == "黄金":
         return {"commission": 0, "stamp": 0, "transfer": 0, "total": 0,
                 "note": "黄金交易费用请手动填写"}
+    cfg = load_trade_fee_config()
     fund = is_fund_code(name, code)
-    commission = round(max(amount * COMMISSION_RATE, COMMISSION_MIN), 2)
-    stamp = round(amount * STAMP_DUTY_RATE, 2) if direction == "卖出" and not fund else 0.0
-    transfer = 0.0 if fund else round(amount * TRANSFER_FEE_RATE, 2)
+    commission = round(max(amount * cfg["commission_rate"], cfg["commission_min"]), 2)
+    stamp = round(amount * cfg["stamp_rate"], 2) if direction == "卖出" and not fund else 0.0
+    transfer = 0.0 if fund else round(amount * cfg["transfer_rate"], 2)
     total = round(commission + stamp + transfer, 2)
     return {"commission": commission, "stamp": stamp, "transfer": transfer,
             "total": total, "amount": round(amount, 2)}

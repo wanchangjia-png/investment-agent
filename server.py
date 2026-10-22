@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import portfolio_agent as agent
 import insights
+import monitor
 
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", os.environ.get("RAILWAY_PORT", 5050)))
@@ -88,7 +89,7 @@ def save_config_sheet(key, value):
             next_row = (ws.max_row or 1) + 1
             ws.cell(row=next_row, column=1, value=key)
             ws.cell(row=next_row, column=2, value=value)
-        wb.save(agent.EXCEL_PATH)
+        agent.save_workbook(wb)
         wb.close()
         return True
     except Exception:
@@ -1599,7 +1600,34 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                 "model": LLM_CONFIG["model"],
                 "has_key": bool(LLM_CONFIG["api_key"]),
                 "key_prefix": LLM_CONFIG["api_key"][:8] + "..." if LLM_CONFIG["api_key"] else "",
+                "fees": agent.load_trade_fee_config(),
             })
+
+        elif path == "/api/calendar":
+            try:
+                force = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("force", ["0"])[0] in ("1", "true")
+                self._send_json(monitor.company_events(force))
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif path == "/api/announcements":
+            try:
+                force = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("force", ["0"])[0] in ("1", "true")
+                self._send_json(monitor.announcements(force))
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif path == "/api/sell-plans":
+            try:
+                self._send_json(monitor.sell_plan_overview())
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif path == "/api/quiet-days":
+            try:
+                self._send_json(monitor.quiet_overview())
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
 
         elif path == "/api/realized-pnl":
             try:
@@ -1677,7 +1705,8 @@ class PortfolioHandler(BaseHTTPRequestHandler):
         _WRITE_PATHS = {
             "/api/holdings-save", "/api/realized-pnl", "/api/capital-flow",
             "/api/transactions", "/api/decisions", "/api/save-config", "/api/refresh",
-            "/api/corporate-actions", "/api/import-statement",
+            "/api/corporate-actions", "/api/import-statement", "/api/calendar",
+            "/api/sell-plans", "/api/quiet-days",
         }
         is_write = (path in _WRITE_PATHS
                     and not (path == "/api/transactions" and data.get("action") == "preview"))
@@ -1746,6 +1775,15 @@ class PortfolioHandler(BaseHTTPRequestHandler):
             elif key == "model":
                 LLM_CONFIG["model"] = value
                 save_config_sheet("model", value)
+            elif key in agent.TRADE_FEE_DEFAULTS:
+                try:
+                    fee = float(value)
+                    if fee < 0:
+                        raise ValueError
+                except (TypeError, ValueError):
+                    self._send_json({"success": False, "error": "费率必须是非负数字"})
+                    return
+                agent.update_trade_fee_config({key: fee})
             self._send_json({"success": True})
 
         elif path == "/api/capital-flow":
@@ -1930,6 +1968,52 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                     "actions": agent.load_corporate_actions(),
                     "total": agent.get_corporate_action_total(),
                 })
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)}, 400)
+
+        elif path == "/api/calendar":
+            try:
+                action = data.get("action", "create")
+                if action == "delete":
+                    if not data.get("confirm"):
+                        self._send_json({"success": False, "error": "删除需要二次确认"}, 400)
+                        return
+                    monitor.delete_manual_event(int(data["row"]))
+                else:
+                    monitor.add_manual_event(data)
+                self._send_json({"success": True, **monitor.company_events()})
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)}, 400)
+
+        elif path == "/api/sell-plans":
+            try:
+                action = data.get("action", "create")
+                if action == "delete":
+                    if not data.get("confirm"):
+                        self._send_json({"success": False, "error": "删除需要二次确认"}, 400)
+                        return
+                    monitor.delete_sell_plan(int(data["row"]))
+                elif action == "update":
+                    monitor.update_sell_plan(data)
+                else:
+                    if not str(data.get("name", "")).strip():
+                        self._send_json({"success": False, "error": "请填写标的名称"})
+                        return
+                    monitor.add_sell_plan(data)
+                self._send_json({"success": True, **monitor.sell_plan_overview()})
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)}, 400)
+
+        elif path == "/api/quiet-days":
+            try:
+                if data.get("action") == "delete":
+                    if not data.get("confirm"):
+                        self._send_json({"success": False, "error": "删除需要二次确认"}, 400)
+                        return
+                    monitor.delete_quiet_day(int(data["row"]))
+                else:
+                    monitor.add_quiet_day(data.get("date"), data.get("reason", ""))
+                self._send_json({"success": True, **monitor.quiet_overview()})
             except Exception as e:
                 self._send_json({"success": False, "error": str(e)}, 400)
 
