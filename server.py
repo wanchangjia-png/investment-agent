@@ -22,81 +22,24 @@ sys.path.insert(0, str(Path(__file__).parent))
 import portfolio_agent as agent
 import insights
 import monitor
+import settings
+import ai_usage
 
-HOST = os.environ.get("HOST", "0.0.0.0")
-PORT = int(os.environ.get("PORT", os.environ.get("RAILWAY_PORT", 5050)))
-DATA_DIR = Path(__file__).parent
+HOST = settings.HOST
+PORT = settings.PORT
+DATA_DIR = settings.DATA_DIR
 HTML_PATH = DATA_DIR / "webapp.html"
 
 # ============ LLM 配置 ============
-# 通过环境变量设置:
-#   LLM_PROVIDER=deepseek|openai
-#   LLM_API_KEY=sk-xxxxx
-#   LLM_MODEL=deepseek-chat|gpt-4o
-# 也可以在网页 Agent 的设置页面配置
-
-LLM_CONFIG = {
-    "provider": os.environ.get("LLM_PROVIDER", "deepseek"),
-    "api_key": os.environ.get("LLM_API_KEY", ""),
-    "model": os.environ.get("LLM_MODEL", "deepseek-chat"),
-}
-
-LLM_ENDPOINTS = {
-    "deepseek": "https://api.deepseek.com/v1/chat/completions",
-    "openai": "https://api.openai.com/v1/chat/completions",
-}
-
-
-def _read_config_sheet():
-    """从 Excel 配置表读取 LLM 设置"""
-    try:
-        from openpyxl import load_workbook
-        wb = load_workbook(agent.EXCEL_PATH)
-        if "配置" in wb.sheetnames:
-            ws = wb["配置"]
-            cfg = {}
-            for row in ws.iter_rows(min_row=2, values_only=True):
-                if row[0] and row[1]:
-                    cfg[str(row[0]).strip()] = str(row[1]).strip()
-            wb.close()
-            # 如果 Excel 里有 API Key，覆盖环境变量
-            if "api_key" in cfg and cfg["api_key"]:
-                LLM_CONFIG["api_key"] = cfg["api_key"]
-            if "provider" in cfg and cfg["provider"]:
-                LLM_CONFIG["provider"] = cfg["provider"]
-            if "model" in cfg and cfg["model"]:
-                LLM_CONFIG["model"] = cfg["model"]
-    except Exception:
-        pass
+# 优先级：Excel「配置」sheet > 环境变量（LLM_PROVIDER / LLM_API_KEY / LLM_MODEL）
+# 也可以在网页右下角 ⚙️ 设置页面修改
+LLM_CONFIG = settings.load_llm_config()
+LLM_ENDPOINTS = settings.LLM_ENDPOINTS
 
 
 def save_config_sheet(key, value):
-    """保存配置到 Excel 配置表"""
-    try:
-        from openpyxl import load_workbook
-        wb = load_workbook(agent.EXCEL_PATH)
-        if "配置" not in wb.sheetnames:
-            wb.create_sheet("配置")
-        ws = wb["配置"]
-        # 检查是否已有该键
-        found = False
-        for row in ws.iter_rows(min_row=2, max_col=2, values_only=False):
-            if row[0].value and str(row[0].value).strip() == key:
-                row[1].value = value
-                found = True
-                break
-        if not found:
-            next_row = (ws.max_row or 1) + 1
-            ws.cell(row=next_row, column=1, value=key)
-            ws.cell(row=next_row, column=2, value=value)
-        agent.save_workbook(wb)
-        wb.close()
-        return True
-    except Exception:
-        return False
-
-
-_read_config_sheet()
+    settings.write_config_values({key: value})
+    return True
 
 def _portfolio_summary():
     """生成简短持仓概况字符串"""
@@ -471,6 +414,7 @@ def chat_stream(messages, search_enabled=True):
         "model": model,
         "messages": full_messages,
         "stream": True,
+        "stream_options": {"include_usage": True},
         "max_tokens": 4096,
         "temperature": 0.7,
     }).encode("utf-8")
@@ -486,6 +430,10 @@ def chat_stream(messages, search_enabled=True):
         method="POST",
     )
 
+    started = time.time()
+    usage = None
+    error = None
+    completed = False
     try:
         resp = urllib.request.urlopen(req, timeout=60)
         buffer = ""
@@ -500,21 +448,32 @@ def chat_stream(messages, search_enabled=True):
                 if not line or line.startswith(":"):
                     continue
                 if line == "data: [DONE]":
+                    completed = True
                     return
                 if line.startswith("data: "):
                     try:
                         data = json.loads(line[6:])
-                        delta = data.get("choices", [{}])[0].get("delta", {})
+                        if data.get("usage"):
+                            usage = data["usage"]
+                        choices = data.get("choices") or [{}]
+                        delta = choices[0].get("delta", {})
                         content = delta.get("content", "")
                         if content:
                             yield json.dumps({"type": "text", "content": content}, ensure_ascii=False)
                     except json.JSONDecodeError:
                         continue
+        completed = True
     except urllib.error.HTTPError as e:
         err_body = e.read().decode("utf-8", errors="ignore")
+        error = f"HTTP {e.code}: {err_body[:200]}"
         yield json.dumps({"type": "error", "content": f"API 请求失败 (HTTP {e.code}): {err_body[:200]}"}, ensure_ascii=False)
     except Exception as e:
+        error = str(e)
         yield json.dumps({"type": "error", "content": f"请求异常: {str(e)}"}, ensure_ascii=False)
+    finally:
+        if not error and not completed:
+            error = "aborted"
+        ai_usage.log_call("chat", provider, model, started, usage, error)
 
 
 # ============ API 处理 ============
@@ -811,11 +770,15 @@ def api_breakeven_realistic(data):
         {"role": "user", "content": prompt},
     ]
 
+    started = time.time()
+    usage = None
+    error = None
     try:
         req_body = json.dumps({"model": model, "messages": messages, "stream": False, "max_tokens": 1024, "temperature": 0.3}).encode()
         req = urllib.request.Request(endpoint, data=req_body, headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}, method="POST")
         resp = urllib.request.urlopen(req, timeout=60)
         result = json.loads(resp.read().decode("utf-8"))
+        usage = result.get("usage")
         content = result["choices"][0]["message"]["content"]
         m = re.search(r'\{.*\}', content, re.DOTALL)
         scenarios = json.loads(m.group()) if m else json.loads(content)
@@ -832,7 +795,10 @@ def api_breakeven_realistic(data):
             out[k] = {"label": label_map.get(k, k), "days": days, "monthly_rise": mr, "reason": v.get("reason", "")}
         return {"scenarios": out, "rise_needed": round(rise_needed, 1), "name": name}
     except Exception as e:
+        error = str(e)
         return {"error": str(e), "scenarios": None}
+    finally:
+        ai_usage.log_call("breakeven", provider, model, started, usage, error)
 
 
 def api_add_position_advice(data):
@@ -910,6 +876,9 @@ def api_add_position_advice(data):
         "temperature": 0.3,
     }).encode("utf-8")
 
+    started = time.time()
+    usage = None
+    error = None
     try:
         req = urllib.request.Request(
             endpoint, data=req_body,
@@ -919,6 +888,7 @@ def api_add_position_advice(data):
         )
         resp = urllib.request.urlopen(req, timeout=60)
         result = json.loads(resp.read().decode("utf-8"))
+        usage = result.get("usage")
         content = result["choices"][0]["message"]["content"]
 
         # 提取 JSON
@@ -928,7 +898,10 @@ def api_add_position_advice(data):
         advice["sector"] = sector
         return advice
     except Exception as e:
+        error = str(e)
         return {"error": f"AI 分析失败: {str(e)}", "stock_name": stock_name}
+    finally:
+        ai_usage.log_call("add_position", provider, model, started, usage, error)
 
 
 # ============ 深度诊断 / 晨报 / 决策 ============
@@ -1014,7 +987,7 @@ def _save_briefing(day, content, source):
         wb = load_workbook(agent.EXCEL_PATH)
         ws = _briefing_sheet(wb)
         ws.append([day, datetime.now().strftime("%Y-%m-%d %H:%M"), content, source])
-        wb.save(agent.EXCEL_PATH)
+        agent.save_workbook(wb)
         wb.close()
         return True
     except Exception as e:
@@ -1087,7 +1060,7 @@ def _save_market_view(data):
             json.dumps({k: v for k, v in data.items() if k != "sources"}, ensure_ascii=False),
             json.dumps(data.get("sources", []), ensure_ascii=False),
         ])
-        wb.save(agent.EXCEL_PATH)
+        agent.save_workbook(wb)
         wb.close()
         _market_cache["at"] = datetime.now()
         _market_cache["data"] = data
@@ -1342,13 +1315,22 @@ def _call_llm_text(system_prompt, user_prompt, max_tokens=900, temperature=0.4):
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
         method="POST",
     )
+    provider = LLM_CONFIG["provider"]
+    model = LLM_CONFIG["model"]
+    started = time.time()
+    usage = None
+    error = None
     try:
         resp = urllib.request.urlopen(req, timeout=60)
         data = json.loads(resp.read().decode("utf-8"))
+        usage = data.get("usage")
         return data["choices"][0]["message"]["content"].strip()
     except Exception as e:
+        error = str(e)
         print(f"⚠️ 晨报 AI 生成失败: {e}")
         return None
+    finally:
+        ai_usage.log_call("briefing", provider, model, started, usage, error)
 
 
 def _ai_briefing(snap):
@@ -1450,7 +1432,7 @@ def _invalidate_ai_cache():
                 ws.delete_rows(r)
                 changed = True
     if changed:
-        wb.save(agent.EXCEL_PATH)
+        agent.save_workbook(wb)
     wb.close()
 
 
@@ -1530,7 +1512,9 @@ class PortfolioHandler(BaseHTTPRequestHandler):
         return HTML_PATH.read_text(encoding="utf-8")
 
     def _send_static(self, name):
-        allow = {"chart.umd.min.js": "application/javascript; charset=utf-8",
+        allow = {"app.js": "application/javascript; charset=utf-8",
+                 "app.css": "text/css; charset=utf-8",
+                 "chart.umd.min.js": "application/javascript; charset=utf-8",
                  "chartjs-plugin-datalabels.min.js": "application/javascript; charset=utf-8"}
         ctype = allow.get(name)
         if not ctype:
@@ -1571,6 +1555,13 @@ class PortfolioHandler(BaseHTTPRequestHandler):
         elif path == "/api/advice":
             try:
                 self._send_json(api_advice())
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif path == "/api/ai-usage":
+            try:
+                days = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("days", ["30"])[0]
+                self._send_json(ai_usage.summarize(int(days)))
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 

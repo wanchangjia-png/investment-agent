@@ -15,40 +15,19 @@ import sys
 import os
 import json
 import shutil
-import threading
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-BEIJING_TZ = timezone(timedelta(hours=8))
-
 import openpyxl
 from openpyxl.utils import get_column_letter
 
-# ============ 配置 ============
-DATA_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
-EXCEL_PATH = Path(os.environ.get("PORTFOLIO_XLSX", DATA_DIR / "portfolio.xlsx"))
-BACKUP_DIR = Path(os.environ.get("PORTFOLIO_BACKUP_DIR", DATA_DIR / "backups"))
-BACKUP_KEEP_DAYS = 14
+from settings import (BEIJING_TZ, DATA_DIR, EXCEL_PATH, BACKUP_DIR,
+                      BACKUP_KEEP_DAYS, EXCEL_LOCK, TRADE_FEE_DEFAULTS,
+                      save_workbook, load_fee_config, update_fee_config,
+                      load_llm_config, LLM_ENDPOINTS)
 
 _last_backup_ts = 0.0
-EXCEL_LOCK = threading.RLock()
-
-
-def save_workbook(wb, path=None):
-    """原子保存：先写临时文件再替换，网页不会读到写了一半的 Excel"""
-    path = Path(path or EXCEL_PATH)
-    tmp = path.with_name(f".{path.stem}.tmp{path.suffix}")
-    with EXCEL_LOCK:
-        try:
-            wb.save(tmp)
-            os.replace(tmp, path)
-        finally:
-            if tmp.exists():
-                try:
-                    tmp.unlink()
-                except OSError:
-                    pass
 
 
 def cleanup_old_files(days=14):
@@ -991,69 +970,9 @@ def _ledger_state(name, account, fallback_qty, fallback_cost):
     return qty, cost, found
 
 
-# A 股默认费率（可在「配置」sheet 覆盖）
-TRADE_FEE_DEFAULTS = {
-    "commission_rate": 0.00025,   # 佣金 万 2.5
-    "commission_min": 5.0,        # 单笔最低佣金
-    "stamp_rate": 0.0005,         # 印花税 0.05%，仅卖出股票
-    "transfer_rate": 0.00001,     # 过户费 0.001%
-}
-_trade_fee_cfg = None
-_trade_fee_cfg_mtime = 0.0
-
-
-def load_trade_fee_config(force=False):
-    """费率从「配置」sheet 读取；按文件 mtime 缓存，改完成本立即生效"""
-    global _trade_fee_cfg, _trade_fee_cfg_mtime
-    try:
-        mtime = EXCEL_PATH.stat().st_mtime
-    except OSError:
-        return dict(TRADE_FEE_DEFAULTS)
-    if not force and _trade_fee_cfg is not None and mtime == _trade_fee_cfg_mtime:
-        return dict(_trade_fee_cfg)
-    cfg = dict(TRADE_FEE_DEFAULTS)
-    try:
-        wb = openpyxl.load_workbook(EXCEL_PATH, read_only=True)
-        if "配置" in wb.sheetnames:
-            for row in wb["配置"].iter_rows(min_row=2, max_col=2, values_only=True):
-                key = str(row[0] or "").strip()
-                if key not in cfg or row[1] in (None, ""):
-                    continue
-                try:
-                    value = float(row[1])
-                except (TypeError, ValueError):
-                    continue
-                if value >= 0:
-                    cfg[key] = value
-        wb.close()
-    except Exception:
-        pass
-    _trade_fee_cfg, _trade_fee_cfg_mtime = cfg, mtime
-    return dict(cfg)
-
-
-def update_trade_fee_config(values):
-    cfg = load_trade_fee_config(force=True)
-    for key, value in values.items():
-        if key in cfg:
-            cfg[key] = float(value)
-    wb = openpyxl.load_workbook(EXCEL_PATH)
-    if "配置" not in wb.sheetnames:
-        wb.create_sheet("配置")
-    ws = wb["配置"]
-    existing = {}
-    for row in ws.iter_rows(min_row=2, max_col=2):
-        if row[0].value:
-            existing[str(row[0].value).strip()] = row[0]
-    for key, value in cfg.items():
-        if key in existing:
-            ws.cell(existing[key].row, 2, value)
-        else:
-            ws.append([key, value])
-    save_workbook(wb)
-    wb.close()
-    load_trade_fee_config(force=True)
-    return cfg
+# 费率配置统一在 settings.py；这里保留旧函数名供 server / CLI 使用
+load_trade_fee_config = load_fee_config
+update_trade_fee_config = update_fee_config
 
 
 def is_fund_code(name, code):

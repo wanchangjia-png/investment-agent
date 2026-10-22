@@ -1,0 +1,2826 @@
+// ============ 全局状态 ============
+let state = { data: null, insights: null, briefLoaded: false };
+let chartBench = null, chartAttr = null;
+let isStreaming = false;
+let pwdPendingAction = null;
+let rpEditingRow = null;
+let cfEditingRow = null;
+let cfFlows = [];
+
+// ============ 排序状态 ============
+let sortColumn = null;
+let sortAsc = true;
+
+function sortBy(col) {
+    if (sortColumn === col) {
+        sortAsc = !sortAsc;
+    } else {
+        sortColumn = col;
+        sortAsc = true;
+    }
+    render();
+}
+
+function getSortedStocks(stocks) {
+    if (!sortColumn || !stocks) return stocks;
+    const sorted = [...stocks];
+    sorted.sort((a, b) => {
+        let va = a[sortColumn], vb = b[sortColumn];
+        if (va === undefined || va === null) va = -Infinity;
+        if (vb === undefined || vb === null) vb = -Infinity;
+        if (typeof va === 'string') {
+            const cmp = va.localeCompare(vb);
+            return sortAsc ? cmp : -cmp;
+        }
+        return sortAsc ? va - vb : vb - va;
+    });
+    return sorted;
+}
+
+// ============ 加载数据 ============
+function fmtUpdatedAt(v) {
+    if (!v) return "";
+    const s = String(v);
+    return s.length >= 16 ? s.slice(5, 16) : s;
+}
+
+async function loadData() {
+    try {
+        const res = await fetch("/api/data");
+        state.data = await res.json();
+        state.lastUpdated = state.data.updated_at || null;
+        render();
+        const bar = document.getElementById("statusBar");
+        bar.textContent = state.lastUpdated
+            ? `行情：${fmtUpdatedAt(state.lastUpdated)}（点刷新获取最新）`
+            : "点右上「刷新」获取最新行情";
+    } catch (e) { document.getElementById("statusBar").textContent = "⚠️ 连接失败"; }
+}
+
+// ============ 小眼睛 隐藏/显示金额 ============
+function toggleEye() {
+    const c = document.querySelector(".container");
+    const btn = document.getElementById("eyeToggle");
+    const hidden = c.classList.toggle("eye-closed");
+    btn.textContent = hidden ? "🔒" : "👁️";
+    btn.title = hidden ? "显示金额" : "隐藏金额";
+    try { localStorage.setItem("eye_hidden", hidden ? "1" : "0"); } catch(e) {}
+}
+
+// 页面加载时恢复上次状态
+try {
+    if (localStorage.getItem("eye_hidden") === "1") {
+        document.querySelector(".container").classList.add("eye-closed");
+        document.getElementById("eyeToggle").textContent = "🔒";
+        document.getElementById("eyeToggle").title = "显示金额";
+    }
+} catch(e) {}
+
+async function refreshData() {
+    const btn = document.getElementById("refreshBtn");
+    const bar = document.getElementById("statusBar");
+    btn.disabled = true; bar.innerHTML = '<span class="spinner"></span> 刷新中...';
+    try {
+        const res = await fetch("/api/refresh");
+        const result = await res.json();
+        if (result.success) {
+            state.data = result.data;
+            state.lastUpdated = result.data?.updated_at || state.lastUpdated;
+            render();
+            const snapMsg = result.snapshot_recorded ? " 📸已记录净值" : "";
+            bar.textContent = "✅ 行情已更新 " + fmtUpdatedAt(state.lastUpdated) + snapMsg;
+        } else { bar.textContent = "⚠️ 刷新失败"; }
+    } catch (e) { bar.textContent = "⚠️ 请求失败"; }
+    btn.disabled = false;
+}
+
+// ============ 渲染 ============
+function render() {
+    const d = state.data; if (!d) return;
+    const upd = document.getElementById("holdingsUpdated");
+    if (upd) {
+        upd.textContent = state.lastUpdated
+            ? `上次行情：${fmtUpdatedAt(state.lastUpdated)} · 点右上「🔄 刷新」更新`
+            : "还没手动刷新过 · 点右上「🔄 刷新」获取行情";
+    }
+    // KPI
+    document.getElementById("kpiTotal").textContent = d.total_value.toLocaleString();
+    const pnlEl = document.getElementById("kpiPnl");
+    pnlEl.textContent = (d.total_pnl >= 0 ? "+" : "") + d.total_pnl.toLocaleString();
+    pnlEl.className = "value " + (d.total_pnl >= 0 ? "up" : "down");
+    const retEl = document.getElementById("kpiReturn");
+    if (retEl) {
+        retEl.textContent = (d.total_return_pct >= 0 ? "+" : "") + d.total_return_pct + "%";
+        retEl.style.color = d.total_return_pct >= 0 ? "#CC0000" : "#009900";
+    }
+    document.getElementById("kpiCount").textContent = d.stocks.length;
+
+    // 今日盈亏（较前日净值记录）
+    const hist = d.history || [];
+    const todayStr = new Date().toLocaleDateString('en-CA');
+    // 找前一个交易日（最晚的不是今天的记录）
+    let prevTotal = null;
+    for (let i = hist.length - 1; i >= 0; i--) {
+        if (hist[i].date !== todayStr) {
+            prevTotal = hist[i].total;
+            break;
+        }
+    }
+    if (prevTotal !== null) {
+        const todayNetFlow = d.today_net_flow || 0;
+        const todayPnl = d.total_value - prevTotal - todayNetFlow;
+        const todayEl = document.getElementById("kpiToday");
+        todayEl.textContent = (todayPnl >= 0 ? "+" : "") + todayPnl.toLocaleString();
+        todayEl.className = "value " + (todayPnl >= 0 ? "up" : "down");
+        document.getElementById("kpiTodaySub").textContent = "较前日";
+    } else {
+        document.getElementById("kpiToday").textContent = "--";
+        document.getElementById("kpiTodaySub").textContent = "暂无前日记录";
+    }
+
+    // 第二排：主账户 / 黄金 / 账户二 / 现金
+    const accts = d.accounts || {};
+    // 主账户（仅股票市值，不含现金）
+    const acct1 = accts["A股主账户"];
+    if (acct1) {
+        const stockVal = acct1.stock_value || acct1.value;
+        document.getElementById("kpiAcct1").textContent = stockVal.toLocaleString();
+        document.getElementById("kpiAcct1Pnl").textContent = (acct1.pnl >= 0 ? "+" : "") + acct1.pnl.toLocaleString();
+        document.getElementById("kpiAcct1Pnl").style.color = acct1.pnl >= 0 ? "#CC0000" : "#009900";
+    }
+    // 账户二（短线）仅股票市值
+    const acct2 = accts["账户二（短线）"] || accts["账户二"];
+    if (acct2) {
+        const stockVal2 = acct2.stock_value || acct2.value;
+        document.getElementById("kpiAcct2").textContent = stockVal2.toLocaleString();
+        document.getElementById("kpiAcct2Pnl").textContent = (acct2.pnl >= 0 ? "+" : "") + acct2.pnl.toLocaleString();
+        document.getElementById("kpiAcct2Pnl").style.color = acct2.pnl >= 0 ? "#CC0000" : "#009900";
+    }
+    // 黄金
+    const goldVal = (d.allocation && d.allocation["黄金"]) || 0;
+    document.getElementById("kpiGold").textContent = goldVal.toLocaleString();
+    const goldAcct = accts["黄金"];
+    if (goldAcct) {
+        const goldPnlEl = document.getElementById("kpiGoldPnl");
+        goldPnlEl.textContent = (goldAcct.pnl >= 0 ? "+" : "") + goldAcct.pnl.toLocaleString();
+        goldPnlEl.style.color = goldAcct.pnl >= 0 ? "#CC0000" : "#009900";
+    }
+    // 黄金累计已卖出变现
+    const goldSoldEl = document.getElementById("kpiGoldSold");
+    if (goldSoldEl && d.gold_sold_total !== undefined) {
+        goldSoldEl.textContent = "已卖出变现 " + d.gold_sold_total.toLocaleString() + " 元";
+    }
+    // 现金
+    const cashVal = (d.allocation && d.allocation["现金"]) || 0;
+    document.getElementById("kpiCash").textContent = cashVal.toLocaleString();
+    // 清仓浮亏
+    const realizedEl = document.getElementById("kpiRealized");
+    if (realizedEl && d.realized_pnl !== undefined) {
+        realizedEl.textContent = (d.realized_pnl >= 0 ? "+" : "") + d.realized_pnl.toLocaleString();
+        realizedEl.style.color = d.realized_pnl >= 0 ? "#CC0000" : "#009900";
+    }
+
+    // 股票下拉候选
+    const dl = document.getElementById("stockOptions");
+    if (dl) {
+        const names = (d.holdings_raw || []).filter(h => h.type === "股票").map(h => h.name);
+        dl.innerHTML = names.map(n => `<option value="${escapeHtml(n)}">`).join("");
+    }
+
+    // 持仓表（排序）
+    const body = document.getElementById("holdingsBody");
+    const sortedStocks = getSortedStocks(d.stocks || []);
+    if (!d.stocks || d.stocks.length === 0) {
+        body.innerHTML = ""; document.getElementById("holdingsEmpty").style.display = "block";
+    } else {
+        document.getElementById("holdingsEmpty").style.display = "none";
+        body.innerHTML = sortedStocks.map(s => {
+            const pc = s.pnl>=0?"up":"down", rc = s.return_pct>=0?"up":"down";
+            return `<tr><td class="stock-name" style="cursor:pointer;color:#2F5496;font-weight:500;" onclick="showStockDetail('${s.name}')">${s.name}</td><td style="font-size:12px;color:#888;">${s.account||'-'}</td><td>${s.qty||'-'}</td><td>${s.price?s.price.toFixed(2):'-'}</td><td>${s.cost?s.cost.toFixed(2):'-'}</td><td class="num">${s.market_value?s.market_value.toLocaleString():'-'}</td><td class="num ${pc}">${s.pnl>=0?"+":""}${s.pnl?s.pnl.toLocaleString():'-'}</td><td class="num ${rc}">${s.return_pct>=0?"+":""}${s.return_pct}%</td><td class="num ${s.today_pnl>0?'up':s.today_pnl<0?'down':''}">${s.today_pnl!==undefined&&s.today_pnl!==null?(s.today_pnl>0?'+':'')+s.today_pnl.toFixed(2):'--'}</td><td class="num">${s.alloc_pct}%</td></tr>`;
+        }).join("");
+        // 更新排序箭头
+        document.querySelectorAll("#tabHoldings th .sort-arrow").forEach(el => el.textContent = "");
+        if (sortColumn) {
+            const ths = document.querySelectorAll("#tabHoldings th");
+            const colIdx = ["name","account","qty","price","cost","market_value","pnl","return_pct","today_pnl","alloc_pct"].indexOf(sortColumn);
+            if (ths[colIdx]) {
+                ths[colIdx].querySelector(".sort-arrow").textContent = sortAsc ? " ▲" : " ▼";
+            }
+        }
+    }
+
+    renderHistory(d.history);
+    // 已清仓页也要跟着刷新，否则保存清仓记录后看不到变化
+    renderCleared();
+    // 今日盈亏随行情刷新
+    if (state.insights) renderTodayMetrics(state.insights);
+}
+
+function renderHistory(history) {
+    const container = document.getElementById("historyContainer");
+    const empty = document.getElementById("historyEmpty");
+    if (!history || history.length === 0) { container.innerHTML=""; empty.style.display="block"; return; }
+    empty.style.display="none";
+
+    // 按年月分组 { "2026-06": { 29: record, 30: record, ... } }
+    const byMonth = {};
+    history.forEach(r => {
+        const ym = r.date.substring(0, 7);
+        if (!byMonth[ym]) byMonth[ym] = {};
+        byMonth[ym][parseInt(r.date.substring(8))] = r;
+    });
+
+    const dayNames = ["周一","周二","周三","周四","周五","周六","周日"];
+    const weekCol = d => d >= 5 ? 'opacity:0.55;' : '';  // 周末淡化
+
+    let html = "";
+    for (const [ym, days] of Object.entries(byMonth).sort()) {
+        const [y, m] = ym.split("-");
+        const monthLabel = `${y}年${parseInt(m)}月`;
+        const firstDay = new Date(+y, +m-1, 1).getDay();  // 0=Sun
+        const startOffset = firstDay === 0 ? 6 : firstDay - 1;
+        const daysInMonth = new Date(+y, +m, 0).getDate();
+
+        // 计算月盈亏合计
+        let monthPnl = 0;
+        for (const dayNum of Object.keys(days)) {
+            const r = days[dayNum];
+            if (r && r.daily) monthPnl += r.daily;
+        }
+
+        html += `<div style="margin-bottom:18px;">
+            <div style="font-weight:600;font-size:15px;color:#2F5496;margin-bottom:8px;">${monthLabel}</div>
+            <table style="font-size:11px;width:100%;table-layout:fixed;border-collapse:separate;border-spacing:3px;">
+            <thead><tr>${dayNames.map(d => `<th style="text-align:center;padding:2px;font-size:11px;color:#888;font-weight:500;">${d}</th>`).join("")}</tr></thead>
+            <tbody>`;
+
+        let day = 1;
+        for (let row = 0; row < 6; row++) {
+            if (day > daysInMonth) break;
+            html += "<tr>";
+            for (let col = 0; col < 7; col++) {
+                if ((row === 0 && col < startOffset) || day > daysInMonth) {
+                    html += `<td style="padding:2px;"></td>`;
+                } else {
+                    const r = days[day];
+                    const isWeekend = col >= 5;
+                    if (r) {
+                        const isUp = r.daily > 0, isDown = r.daily < 0;
+                        const bgColor = isUp ? '#fff0f0' : isDown ? '#f0fff0' : '#f8f8f8';
+                        const dailyColor = isUp ? '#CC0000' : isDown ? '#009900' : '#888';
+                        html += `<td style="padding:4px 2px;text-align:center;background:${bgColor};border-radius:6px;${weekCol(isWeekend)}vertical-align:top;">
+                            <div style="font-weight:600;font-size:13px;color:#333;">${day}</div>
+                            <div style="font-size:9px;color:#999;line-height:1.3;">总资产</div>
+                            <div style="font-size:10px;color:#555;line-height:1.3;">${r.total.toLocaleString()}</div>
+                            <div style="font-size:9px;color:#999;line-height:1.3;">日盈亏</div>
+                            <div style="font-size:10px;font-weight:500;color:${dailyColor};">${isUp?'+':''}${r.daily?r.daily.toLocaleString():'--'}</div>
+                        </td>`;
+                    } else {
+                        html += `<td style="padding:4px 2px;text-align:center;color:#ddd;font-size:11px;${weekCol(isWeekend)}">${day}</td>`;
+                    }
+                    day++;
+                }
+            }
+            html += "</tr>";
+        }
+        html += `</tbody></table>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 12px;background:#f8f9ff;border-radius:8px;font-size:13px;margin-top:4px;">
+                <span style="color:#888;">月盈亏合计</span>
+                <span style="font-weight:700;color:${monthPnl>=0?'#CC0000':'#009900'};">${monthPnl>=0?'+':''}${monthPnl.toLocaleString()}</span>
+            </div>
+        </div>`;
+    }
+    container.innerHTML = html;
+}
+
+// ============ 已清仓 ============
+function renderCleared() {
+    const d = state.data;
+    if (!d) return;
+    const cleared = d.cleared_stocks || [];
+    const body = document.getElementById("clearedBody");
+    const empty = document.getElementById("clearedEmpty");
+    const summary = document.getElementById("clearedSummary");
+
+    if (cleared.length === 0) {
+        body.innerHTML = "";
+        empty.style.display = "block";
+        summary.innerHTML = "";
+        return;
+    }
+    empty.style.display = "none";
+
+    // 统计
+    const totalPnl = cleared.reduce((a, c) => a + (c.realized_pnl || 0), 0);
+    const profitCount = cleared.filter(c => (c.realized_pnl || 0) >= 0).length;
+    const lossCount = cleared.length - profitCount;
+    summary.innerHTML = `
+        <div class="kpi-card" style="padding:8px 12px;"><div class="label" style="font-size:11px;">已清仓</div><div class="value" style="font-size:16px;">${cleared.length}只</div></div>
+        <div class="kpi-card" style="padding:8px 12px;"><div class="label" style="font-size:11px;">清仓盈亏</div><div class="value" style="font-size:16px;color:${totalPnl>=0?'#CC0000':'#009900'}">${totalPnl>=0?'+':''}${totalPnl.toLocaleString()}</div></div>
+        <div class="kpi-card" style="padding:8px 12px;"><div class="label" style="font-size:11px;">盈利/亏损</div><div class="value" style="font-size:16px;"><span style="color:#CC0000;">${profitCount}</span>/<span style="color:#009900;">${lossCount}</span></div></div>
+    `;
+
+    const sorted = [...cleared].sort((a, b) => (b.clear_date || "").localeCompare(a.clear_date || ""));
+    body.innerHTML = sorted.map(c => {
+        const pnl = c.realized_pnl || 0;
+        return `<tr>
+            <td style="font-weight:500;">${escapeHtml(c.name)}</td>
+            <td style="font-size:12px;color:#888;">${c.account||'-'}</td>
+            <td class="num">${c.cost>0?c.cost.toFixed(2):'-'}</td>
+            <td class="num">${c.last_price>0?c.last_price.toFixed(2):'-'}</td>
+            <td class="num" style="font-weight:600;color:${pnl>=0?'#CC0000':'#009900'}">${pnl>=0?'+':''}${pnl.toLocaleString()}</td>
+            <td style="font-size:11px;color:#888;">${c.clear_date||'-'}</td>
+        </tr>`;
+    }).join("");
+}
+
+// ============ Tab 切换 ============
+function switchTab(name, btn) {
+    document.querySelectorAll(".tab-btn").forEach(t=>t.classList.remove("active"));
+    document.querySelectorAll(".tab-content").forEach(t=>t.classList.remove("active"));
+    const activeBtn = btn || document.querySelector(`.tab-btn[data-tab="${name}"]`);
+    if (activeBtn) activeBtn.classList.add("active");
+    const tabName = "tab" + name.charAt(0).toUpperCase() + name.slice(1);
+    const tab = document.getElementById(tabName);
+    if (tab) tab.classList.add("active");
+    // 按需加载数据
+    if (name === "breakeven") loadBreakeven();
+    if (name === "cleared") renderCleared();
+    if (name === "transactions") { loadTransactions(); loadCorporateActions(); loadSellPlans(); }
+    if (name === "today") { loadToday(); loadMarketView(); loadQuietDays(); }
+    if (name === "risks") { loadInsights(); loadAnnouncements(); }
+    if (name === "calendar") loadCalendar();
+    if (name === "decisions") loadDecisions();
+}
+
+// ============ 对话框 ============
+async function sendMessage() {
+    const input = document.getElementById("chatInput");
+    const text = input.value.trim();
+    if (!text || isStreaming) return;
+
+    const messages = document.getElementById("chatMessages");
+    const sendBtn = document.getElementById("sendBtn");
+    const statusEl = document.getElementById("chatStatus");
+
+    // 添加用户消息
+    messages.innerHTML += `<div class="msg user">${escapeHtml(text)}</div>`;
+    input.value = "";
+    messages.scrollTop = messages.scrollHeight;
+
+    // AI 消息占位
+    const aiMsgId = "msg-" + Date.now();
+    messages.innerHTML += `<div class="msg assistant" id="${aiMsgId}"><span class="spinner"></span> 思考中...</div>`;
+    messages.scrollTop = messages.scrollHeight;
+
+    isStreaming = true;
+    sendBtn.disabled = true;
+    statusEl.textContent = "AI 回复中...";
+
+    // 构建消息历史
+    const history = [];
+    const allMsgs = messages.querySelectorAll(".msg.user, .msg.assistant:not(.system)");
+    allMsgs.forEach(m => {
+        if (m.id === aiMsgId) return;
+        if (m.classList.contains("user")) history.push({role:"user",text:m.textContent});
+        else if (m.classList.contains("assistant") && !m.querySelector(".spinner")) {
+            // 提取纯文本（去除流式光标）
+            let t = m.textContent || "";
+            history.push({role:"assistant",text:t});
+        }
+    });
+    history.push({role:"user",text});
+
+    const searchEnabled = document.getElementById("searchToggle").checked;
+
+    try {
+        const res = await fetch("/api/chat", {
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({ messages: history.map(h=>({role:h.role,content:h.text})), search: searchEnabled })
+        });
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        const aiEl = document.getElementById(aiMsgId);
+        aiEl.innerHTML = "";
+        let buffer = "";
+        let fullText = "";
+        let hasSearchStatus = false;
+        let streamDone = false;
+
+        while (true) {
+            if (streamDone) break;
+            const {done, value} = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, {stream: true});
+            const parts = buffer.split("\n");
+            buffer = parts.pop() || "";
+
+            for (const part of parts) {
+                const line = part.trim();
+                if (!line || !line.startsWith("data: ")) continue;
+                const jsonStr = line.slice(6);
+                if (jsonStr === "[DONE]") { streamDone = true; break; }
+
+                try {
+                    const data = JSON.parse(jsonStr);
+                    if (data.type === "text") {
+                        fullText += data.content;
+                        const displayText = fullText.replace(/<save_memory>.*?<\/save_memory>/g, '');
+                        aiEl.innerHTML = marked(displayText) + '<span class="streaming-cursor"></span>';
+                        messages.scrollTop = messages.scrollHeight;
+                    } else if (data.type === "search_status") {
+                        hasSearchStatus = true;
+                        const done = data.content.includes("✅") || data.content.includes("⚠️") || data.content.includes("未搜到");
+                        aiEl.innerHTML = `<div class="search-loading${done ? ' search-done' : ''}"><span class="search-spinner"></span>${data.content}</div>`;
+                        messages.scrollTop = messages.scrollHeight;
+                    } else if (data.type === "search_heartbeat") {
+                        hasSearchStatus = true;
+                        const spinner = aiEl.querySelector('.search-spinner');
+                        if (spinner) {
+                            aiEl.querySelector('.search-loading') && (aiEl.querySelector('.search-loading').innerHTML = `<span class="search-spinner"></span>${data.content}`);
+                        } else {
+                            aiEl.innerHTML = `<div class="search-loading"><span class="search-spinner"></span>${data.content}</div>`;
+                        }
+                        messages.scrollTop = messages.scrollHeight;
+                    } else if (data.type === "error") {
+                        aiEl.innerHTML = `<div style="color:#CC0000;">⚠️ ${data.content}</div>`;
+                    }
+                } catch(e) {}
+            }
+        }
+        // 移除光标
+        if (fullText) {
+            const el = document.getElementById(aiMsgId);
+            const displayText = fullText.replace(/<save_memory>.*?<\/save_memory>/g, '');
+            if (el) el.innerHTML = marked(displayText);
+        }
+    } catch(e) {
+        const el = document.getElementById(aiMsgId);
+        if (el) el.innerHTML = `<div style="color:#CC0000;">⚠️ 请求失败: ${e.message}</div>`;
+    }
+
+    isStreaming = false;
+    sendBtn.disabled = false;
+    statusEl.textContent = "";
+    saveChatHistory();
+}
+
+function clearChat() {
+    if (!confirm("清空对话？")) return;
+    localStorage.removeItem("chatHistory");
+    document.getElementById("chatMessages").innerHTML = `<div class="msg assistant">👋 对话已清空，请问有什么投资问题？</div>`;
+}
+
+// ============ 聊天持久化 ============
+function saveChatHistory() {
+    const els = document.querySelectorAll("#chatMessages .msg.user, #chatMessages .msg.assistant");
+    const msgs = [];
+    els.forEach(el => {
+        if (el.querySelector(".spinner")) return;
+        const role = el.classList.contains("user") ? "user" : "assistant";
+        const text = el.textContent || "";
+        if (text.trim()) msgs.push({role, text});
+    });
+    try { localStorage.setItem("chatHistory", JSON.stringify(msgs)); } catch(e) {}
+}
+
+function loadChatHistory() {
+    try {
+        const saved = localStorage.getItem("chatHistory");
+        if (!saved) return false;
+        const msgs = JSON.parse(saved);
+        if (!msgs.length) return false;
+        const container = document.getElementById("chatMessages");
+        container.innerHTML = msgs.map(m =>
+            `<div class="msg ${m.role}">${marked(m.text)}</div>`
+        ).join("");
+        container.scrollTop = container.scrollHeight;
+        return true;
+    } catch(e) { return false; }
+}
+
+// ============ 设置 ============
+async function showSettings() {
+    document.getElementById("settingsModal").classList.add("show");
+    try {
+        const res = await fetch("/api/config");
+        const cfg = await res.json();
+        document.getElementById("selProvider").value = cfg.provider;
+        document.getElementById("inpApiKey").value = "";
+        document.getElementById("keyStatus").textContent = cfg.has_key ? `✅ 已配置 (${cfg.key_prefix})` : "❌ 未配置";
+        // 设置模型
+        const sel = document.getElementById("selModel");
+        for (let opt of sel.options) { if (opt.value === cfg.model) { sel.value = cfg.model; break; } }
+        updateModelHint();
+        const fees = cfg.fees || {};
+        const num = (v, mul) => v === undefined ? "" : String(+(v * mul).toFixed(6));
+        document.getElementById("feeCommissionRate").value = num(fees.commission_rate, 10000);
+        document.getElementById("feeCommissionMin").value = num(fees.commission_min, 1);
+        document.getElementById("feeStampRate").value = num(fees.stamp_rate, 100);
+        document.getElementById("feeTransferRate").value = num(fees.transfer_rate, 100);
+    } catch(e) {}
+}
+
+function hideSettings() { document.getElementById("settingsModal").classList.remove("show"); }
+
+async function saveSettings() {
+    const provider = document.getElementById("selProvider").value;
+    const apiKey = document.getElementById("inpApiKey").value.trim();
+    const model = document.getElementById("selModel").value;
+
+    if (apiKey) {
+        await fetch("/api/save-config", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({key:"api_key",value:apiKey})});
+    }
+    await fetch("/api/save-config", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({key:"provider",value:provider})});
+    await fetch("/api/save-config", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({key:"model",value:model})});
+
+    const feeFields = [
+        ["feeCommissionRate", "commission_rate", 0.0001],
+        ["feeCommissionMin", "commission_min", 1],
+        ["feeStampRate", "stamp_rate", 0.01],
+        ["feeTransferRate", "transfer_rate", 0.01],
+    ];
+    for (const [id, key, mul] of feeFields) {
+        const raw = document.getElementById(id).value.trim();
+        if (raw === "") continue;
+        const value = parseFloat(raw);
+        if (isNaN(value) || value < 0) { alert("费率必须是非负数字"); return; }
+        const res = await fetch("/api/save-config", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({key, value: value * mul})});
+        const d = await res.json();
+        if (!d.success) { alert(d.error || "费率保存失败"); return; }
+    }
+
+    // 更新 badge
+    document.getElementById("modelBadge").textContent = model;
+
+    hideSettings();
+    alert("✅ 已保存！请重新发送消息生效。");
+}
+
+function updateModelHint() {
+    const p = document.getElementById("selProvider").value;
+    const sel = document.getElementById("selModel");
+    const hint = document.getElementById("modelHint");
+    if (p === "deepseek") {
+        sel.innerHTML = `<option value="deepseek-chat">deepseek-chat (DeepSeek V4)</option><option value="deepseek-reasoner">deepseek-reasoner (DeepSeek R1)</option>`;
+        hint.textContent = "推荐 deepseek-chat，速度快性价比高";
+    } else {
+        sel.innerHTML = `<option value="gpt-4o">GPT-4o</option><option value="gpt-4o-mini">GPT-4o-mini</option>`;
+        hint.textContent = "需要 OpenAI API Key";
+    }
+}
+
+// ============ 编辑记录 ============
+async function showEditHistory() {
+    document.getElementById("editHistoryModal").classList.add("show");
+    const container = document.getElementById("editHistoryContainer");
+    container.innerHTML = '<div class="empty-state"><span class="spinner"></span> 加载中...</div>';
+    try {
+        const res = await fetch("/api/edit-history");
+        const data = await res.json();
+        const logs = data.logs || [];
+        if (logs.length === 0) {
+            container.innerHTML = '<div class="empty-state"><div class="icon">📋</div><div>暂无编辑记录</div></div>';
+            return;
+        }
+        container.innerHTML = `<table style="font-size:12px;"><thead><tr><th style="width:140px;">时间</th><th>改动内容</th></tr></thead><tbody>${logs.map(l => `<tr><td style="white-space:nowrap;color:#888;">${l.time}</td><td>${escapeHtml(l.detail)}</td></tr>`).join('')}</tbody></table>`;
+    } catch(e) {
+        container.innerHTML = '<div class="empty-state">⚠️ 加载失败</div>';
+    }
+}
+
+function hideEditHistory() {
+    document.getElementById("editHistoryModal").classList.remove("show");
+}
+
+// ============ 出入金 ============
+function showCapitalFlowPwd() {
+    pwdPendingAction = showCapitalFlow;
+    document.getElementById("pwdModal").classList.add("show");
+    document.getElementById("pwdInput").value = "";
+    document.getElementById("pwdError").style.display = "none";
+    setTimeout(() => document.getElementById("pwdInput").focus(), 100);
+}
+
+function showCapitalFlow(editData) {
+    document.getElementById("capitalFlowModal").classList.add("show");
+    document.getElementById("cfEditHint").style.display = editData ? "inline" : "none";
+    document.getElementById("cfCancelEdit").style.display = editData ? "inline" : "none";
+    if (editData) {
+        cfEditingRow = editData.row;
+        document.getElementById("cfType").value = editData.type || "存入";
+        document.getElementById("cfAmount").value = editData.amount || "";
+        document.getElementById("cfNote").value = editData.note || "";
+    } else {
+        cfEditingRow = null;
+        document.getElementById("cfType").value = "存入";
+        document.getElementById("cfAmount").value = "";
+        document.getElementById("cfNote").value = "";
+    }
+    loadCapitalFlowHistory();
+}
+
+function hideCapitalFlow() {
+    document.getElementById("capitalFlowModal").classList.remove("show");
+    cfEditingRow = null;
+}
+
+function cancelEditCapitalFlow() {
+    cfEditingRow = null;
+    document.getElementById("cfEditHint").style.display = "none";
+    document.getElementById("cfCancelEdit").style.display = "none";
+    document.getElementById("cfType").value = "存入";
+    document.getElementById("cfAmount").value = "";
+    document.getElementById("cfNote").value = "";
+}
+
+async function saveCapitalFlow() {
+    const amount = parseFloat(document.getElementById("cfAmount").value);
+    const type = document.getElementById("cfType").value;
+    const note = document.getElementById("cfNote").value.trim();
+    if (!amount || amount <= 0) { alert("请输入有效金额"); return; }
+    try {
+        const body = cfEditingRow
+            ? { action: "update", row: cfEditingRow, amount, type, note }
+            : { amount, type, note };
+        const res = await fetch("/api/capital-flow", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (data.success) {
+            cfEditingRow = null;
+            document.getElementById("cfEditHint").style.display = "none";
+            document.getElementById("cfCancelEdit").style.display = "none";
+            loadCapitalFlowHistory();
+            refreshData();
+        } else {
+            alert("保存失败: " + (data.error || ""));
+        }
+    } catch(e) {
+        alert("保存失败: " + e.message);
+    }
+}
+
+function editCapitalFlow(row) {
+    const f = cfFlows.find(x => x.row === row);
+    if (f) showCapitalFlow(f);
+}
+
+async function deleteCapitalFlow(row) {
+    if (!confirm("确定要删除这条出入金记录吗？")) return;
+    try {
+        const res = await fetch("/api/capital-flow", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ action: "delete", row, confirm: true })
+        });
+        const data = await res.json();
+        if (data.success) {
+            if (cfEditingRow === row) {
+                cfEditingRow = null;
+                document.getElementById("cfEditHint").style.display = "none";
+                document.getElementById("cfCancelEdit").style.display = "none";
+            }
+            loadCapitalFlowHistory();
+            refreshData();
+        } else {
+            alert("删除失败: " + (data.error || ""));
+        }
+    } catch(e) {
+        alert("删除失败: " + e.message);
+    }
+}
+
+async function loadCapitalFlowHistory() {
+    const container = document.getElementById("cfHistory");
+    try {
+        const res = await fetch("/api/capital-flows");
+        const data = await res.json();
+        const flows = data.flows || [];
+        cfFlows = flows;
+        if (flows.length === 0) {
+            container.innerHTML = '<div style="text-align:center;color:#ccc;font-size:12px;padding:10px;">暂无记录</div>';
+            return;
+        }
+        container.innerHTML = `<table style="font-size:12px;width:100%;"><thead><tr><th>日期</th><th>类型</th><th class="num">金额</th><th>备注</th><th style="width:55px;">操作</th></tr></thead><tbody>${flows.map(f => {
+            const sign = f.type === '存入' ? '+' : '-';
+            const color = f.type === '存入' ? '#CC0000' : '#009900';
+            return `<tr><td style="font-size:11px;color:#888;white-space:nowrap;">${f.date}</td><td>${f.type}</td><td class="num" style="color:${color}">${sign}${f.amount.toLocaleString()}</td><td style="font-size:11px;color:#888;max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(f.note)}</td>
+                <td style="white-space:nowrap;">
+                    <button class="btn btn-sm" style="background:none;color:#2F5496;border:none;cursor:pointer;font-size:11px;padding:2px 4px;" onclick="editCapitalFlow(${f.row})">✏️</button>
+                    <button class="btn btn-sm" style="background:none;color:#CC0000;border:none;cursor:pointer;font-size:11px;padding:2px 4px;" onclick="deleteCapitalFlow(${f.row})">🗑️</button>
+                </td></tr>`;
+        }).join("")}</tbody></table>`;
+    } catch(e) {
+        container.innerHTML = '<div style="text-align:center;color:#CC0000;font-size:12px;">加载失败</div>';
+    }
+}
+
+// ============ 清仓记录 ============
+function showRealizedPnlPwd() {
+    pwdPendingAction = showRealizedPnl;
+    document.getElementById("pwdModal").classList.add("show");
+    document.getElementById("pwdInput").value = "";
+    document.getElementById("pwdError").style.display = "none";
+    setTimeout(() => document.getElementById("pwdInput").focus(), 100);
+}
+
+function showRealizedPnl() {
+    document.getElementById("realizedPnlModal").classList.add("show");
+    // 重置编辑状态
+    rpEditingRow = null;
+    document.getElementById("rpEditHint").style.display = "none";
+    document.getElementById("rpCancelEdit").style.display = "none";
+    document.getElementById("rpSaveBtn").textContent = "💾 保存";
+    document.getElementById("rpName").style.display = "";
+    document.getElementById("rpNameInput").style.display = "none";
+    document.getElementById("rpNameInput").value = "";
+    // 填充股票下拉（含已清仓股票，避免清仓后选不到）
+    const sel = document.getElementById("rpName");
+    sel.innerHTML = '<option value="">请选择...</option>';
+    const names = new Set();
+    if (state.data && state.data.stocks) {
+        state.data.stocks.forEach(s => names.add(s.name));
+    }
+    if (state.data && state.data.cleared_stocks) {
+        state.data.cleared_stocks.forEach(s => names.add(s.name));
+    }
+    names.forEach(n => {
+        sel.innerHTML += `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`;
+    });
+    const today = new Date();
+    const pad = n => String(n).padStart(2, "0");
+    document.getElementById("rpDate").value =
+        `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+    document.getElementById("rpQty").value = "";
+    document.getElementById("rpPrice").value = "";
+    document.getElementById("rpCost").value = "";
+    document.getElementById("rpAmount").value = "";
+    loadRealizedPnlHistory();
+}
+
+function rpFillCost() {
+    const name = document.getElementById("rpName").value;
+    if (!name || !state.data) return;
+    let cost = null;
+    const active = (state.data.stocks || []).find(s => s.name === name);
+    if (active) cost = active.cost;
+    if (cost === null && state.data.cleared_stocks) {
+        const cleared = state.data.cleared_stocks.find(s => s.name === name);
+        if (cleared) cost = cleared.cost;
+    }
+    if (cost !== null && cost !== undefined && cost !== 0) {
+        document.getElementById("rpCost").value = cost;
+        rpAutoCalcPnl();
+    }
+}
+
+function rpAutoCalcPnl() {
+    const qty = parseFloat(document.getElementById("rpQty").value);
+    const price = parseFloat(document.getElementById("rpPrice").value);
+    const costRaw = document.getElementById("rpCost").value;
+    const cost = parseFloat(costRaw);
+    if (qty > 0 && price > 0 && costRaw !== "" && !isNaN(cost)) {
+        document.getElementById("rpAmount").value = ((price - cost) * qty).toFixed(2);
+    }
+}
+
+function rpCollect() {
+    const qtyRaw = document.getElementById("rpQty").value;
+    const priceRaw = document.getElementById("rpPrice").value;
+    const costRaw = document.getElementById("rpCost").value;
+    const amountRaw = document.getElementById("rpAmount").value;
+    const qty = qtyRaw === "" ? null : parseFloat(qtyRaw);
+    const price = priceRaw === "" ? null : parseFloat(priceRaw);
+    const cost = costRaw === "" ? null : parseFloat(costRaw);
+    let amount = amountRaw === "" ? null : parseFloat(amountRaw);
+    if (amount === null && qty && price !== null && cost !== null) {
+        amount = Math.round((price - cost) * qty * 100) / 100;
+    }
+    return {
+        name: document.getElementById("rpNameInput").value.trim() || document.getElementById("rpName").value,
+        date: document.getElementById("rpDate").value,
+        qty, price, cost, amount,
+    };
+}
+
+function hideRealizedPnl() {
+    document.getElementById("realizedPnlModal").classList.remove("show");
+}
+
+async function saveRealizedPnl() {
+    if (rpEditingRow) {
+        // 编辑模式
+        const rec = rpCollect();
+        if (!rec.name) { alert("请输入股票名称"); return; }
+        if (rec.amount === null && !(rec.qty && rec.price !== null && rec.cost !== null)) {
+            alert("请输入盈亏金额，或填写股数/卖出价/成本价");
+            return;
+        }
+        try {
+            const res = await fetch("/api/realized-pnl", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    action: "update", row: rpEditingRow,
+                    name: rec.name, date: rec.date,
+                    qty: rec.qty, price: rec.price, cost: rec.cost,
+                    amount: rec.amount,
+                })
+            });
+            const data = await res.json();
+            if (data.success) {
+                rpEditingRow = null;
+                document.getElementById("rpEditHint").style.display = "none";
+                document.getElementById("rpCancelEdit").style.display = "none";
+                document.getElementById("rpSaveBtn").textContent = "💾 保存";
+                document.getElementById("rpName").style.display = "";
+                document.getElementById("rpNameInput").style.display = "none";
+                loadRealizedPnlHistory();
+                refreshData();
+            } else {
+                alert("更新失败: " + (data.error || ""));
+            }
+        } catch(e) {
+            alert("更新失败: " + e.message);
+        }
+        return;
+    }
+
+    // 新增模式
+    const rec = rpCollect();
+    if (!rec.name) { alert("请选择股票"); return; }
+    if (rec.amount === null && !(rec.qty && rec.price !== null && rec.cost !== null)) {
+        alert("请输入盈亏金额，或填写股数/卖出价/成本价");
+        return;
+    }
+    try {
+        const res = await fetch("/api/realized-pnl", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                name: rec.name, date: rec.date,
+                qty: rec.qty, price: rec.price, cost: rec.cost,
+                amount: rec.amount,
+            })
+        });
+        const data = await res.json();
+        if (data.success) {
+            loadRealizedPnlHistory();
+            document.getElementById("rpName").value = "";
+            document.getElementById("rpQty").value = "";
+            document.getElementById("rpPrice").value = "";
+            document.getElementById("rpCost").value = "";
+            document.getElementById("rpAmount").value = "";
+            refreshData();
+        } else {
+            alert("保存失败: " + (data.error || ""));
+        }
+    } catch(e) {
+        alert("保存失败: " + e.message);
+    }
+}
+
+async function loadRealizedPnlHistory() {
+    const container = document.getElementById("rpHistory");
+    try {
+        const res = await fetch("/api/realized-pnl");
+        const data = await res.json();
+        const records = data.records || [];
+        const total = data.total || 0;
+        const totalEl = document.getElementById("rpTotal");
+        if (totalEl) {
+            totalEl.textContent = (total >= 0 ? "+" : "") + total.toLocaleString();
+            totalEl.style.color = total >= 0 ? "#CC0000" : "#009900";
+        }
+        const ledgerEl = document.getElementById("rpLedgerNote");
+        if (ledgerEl && data.ledger_total !== undefined) {
+            const lg = Number(data.ledger_total), grand = Number(data.grand_total);
+            ledgerEl.innerHTML = `交易流水已实现 <b style="color:${lg >= 0 ? '#CC0000' : '#009900'}">${lg >= 0 ? "+" : ""}${lg.toLocaleString()}</b>；
+                合并老仓/账户二后累计 <b style="color:${grand >= 0 ? '#CC0000' : '#009900'}">${grand >= 0 ? "+" : ""}${grand.toLocaleString()}</b>（看板用这个数）`;
+        }
+        if (records.length === 0) {
+            container.innerHTML = '<div style="text-align:center;color:#ccc;font-size:12px;padding:20px;">暂无清仓记录</div>';
+            return;
+        }
+        container.innerHTML = `<table style="font-size:12px;width:100%;"><thead><tr><th>日期</th><th>名称</th><th class="num">实现盈亏</th><th style="width:80px;">操作</th></tr></thead><tbody>${records.map(r => {
+            const pnl = r.pnl || 0;
+            return `<tr><td style="font-size:11px;color:#888;white-space:nowrap;">${r.date}</td><td>${escapeHtml(r.name)}</td><td class="num" style="font-weight:600;color:${pnl>=0?'#CC0000':'#009900'}">${pnl>=0?'+':''}${pnl.toLocaleString()}</td>
+                <td style="white-space:nowrap;">
+                    <button class="btn btn-sm" style="background:none;color:#2F5496;border:none;cursor:pointer;font-size:11px;padding:2px 4px;" onclick="editRealizedPnl(${r.row})">✏️</button>
+                    <button class="btn btn-sm" style="background:none;color:#CC0000;border:none;cursor:pointer;font-size:11px;padding:2px 4px;" onclick="deleteRealizedPnl(${r.row})">🗑️</button>
+                </td></tr>`;
+        }).join("")}</tbody></table>`;
+        // 缓存记录供编辑/删除使用
+        window._rpRecords = records;
+    } catch(e) {
+        container.innerHTML = '<div style="text-align:center;color:#CC0000;font-size:12px;">加载失败</div>';
+    }
+}
+
+function editRealizedPnl(row) {
+    const records = window._rpRecords || [];
+    const r = records.find(x => x.row === row);
+    if (!r) { alert("找不到该记录"); return; }
+    rpEditingRow = row;
+    document.getElementById("rpEditHint").style.display = "inline";
+    document.getElementById("rpCancelEdit").style.display = "inline";
+    document.getElementById("rpSaveBtn").textContent = "💾 更新";
+    document.getElementById("rpName").style.display = "none";
+    const nameInput = document.getElementById("rpNameInput");
+    nameInput.style.display = "";
+    nameInput.value = r.name;
+    document.getElementById("rpDate").value = (r.date || "").slice(0, 10);
+    document.getElementById("rpQty").value = r.qty || "";
+    document.getElementById("rpPrice").value = r.price || "";
+    document.getElementById("rpCost").value = r.cost || "";
+    document.getElementById("rpAmount").value = r.pnl;
+}
+
+function cancelEditRealizedPnl() {
+    rpEditingRow = null;
+    document.getElementById("rpEditHint").style.display = "none";
+    document.getElementById("rpCancelEdit").style.display = "none";
+    document.getElementById("rpSaveBtn").textContent = "💾 保存";
+    document.getElementById("rpName").style.display = "";
+    document.getElementById("rpNameInput").style.display = "none";
+    document.getElementById("rpNameInput").value = "";
+    document.getElementById("rpQty").value = "";
+    document.getElementById("rpPrice").value = "";
+    document.getElementById("rpCost").value = "";
+    document.getElementById("rpAmount").value = "";
+}
+
+async function deleteRealizedPnl(row) {
+    const records = window._rpRecords || [];
+    const r = records.find(x => x.row === row);
+    if (!r) { alert("找不到该记录"); return; }
+    if (!confirm(`确定删除「${r.name}」的清仓记录？`)) return;
+    try {
+        const res = await fetch("/api/realized-pnl", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({action: "delete", row, confirm: true})
+        });
+        const data = await res.json();
+        if (data.success) {
+            if (rpEditingRow === row) cancelEditRealizedPnl();
+            loadRealizedPnlHistory();
+            refreshData();
+        } else {
+            alert("删除失败: " + (data.error || ""));
+        }
+    } catch(e) {
+        alert("删除失败: " + e.message);
+    }
+}
+
+// ============ 个股详情 ============
+let stockKlineChart = null;
+let klineDataCache = {};
+
+function showStockDetail(name) {
+    const d = state.data;
+    if (!d || !d.stocks) return;
+    const s = d.stocks.find(x => x.name === name);
+    if (!s) return;
+
+    document.getElementById("stockDetailName").textContent = s.name;
+    const sectorMap = {"科达利":"新能源车","三花智控":"新能源车","拓普集团":"新能源车","天齐锂业":"新能源车","立讯精密":"消费电子","五粮液":"白酒","元隆雅图":"文化传媒","半导体ETF":"半导体","芯片ETF":"半导体","半导体芯片ETF":"半导体"};
+    const sector = sectorMap[name] || "其他";
+    const needRise = s.pnl < 0 ? ((s.cost - s.price) / s.price * 100).toFixed(1) : '0';
+    const pnlColor = s.pnl>=0?'#CC0000':'#009900';
+
+    // 顶部四格
+    document.getElementById("stockDetailTop").innerHTML = `
+        <div style="background:#f8f9ff;padding:8px;border-radius:6px;text-align:center;">
+            <div style="color:#999;font-size:10px;">现价</div>
+            <div style="font-size:18px;font-weight:700;">${s.price?s.price.toFixed(2):'-'}</div>
+        </div>
+        <div style="background:#f8f9ff;padding:8px;border-radius:6px;text-align:center;">
+            <div style="color:#999;font-size:10px;">成本</div>
+            <div style="font-size:18px;font-weight:700;">${s.cost?s.cost.toFixed(2):'-'}</div>
+        </div>
+        <div style="background:#f8f9ff;padding:8px;border-radius:6px;text-align:center;">
+            <div style="color:#999;font-size:10px;">持股</div>
+            <div style="font-size:18px;font-weight:700;">${s.qty||0}</div>
+            <div style="font-size:10px;color:#888;">${s.qty>=100?Math.floor(s.qty/100)+'手':''}</div>
+        </div>
+        <div style="background:#f8f9ff;padding:8px;border-radius:6px;text-align:center;">
+            <div style="color:#999;font-size:10px;">市值</div>
+            <div style="font-size:18px;font-weight:700;">${s.market_value?s.market_value.toLocaleString():'-'}</div>
+        </div>`;
+
+    // 盈亏 + 信息
+    document.getElementById("stockDetailPnl").innerHTML = `
+        <div style="padding:8px;border-radius:6px;background:${s.pnl>=0?'#f0fff0':'#fff0f0'};">
+            <div style="color:#999;font-size:10px;">盈亏</div>
+            <div style="font-size:16px;font-weight:700;color:${pnlColor};">${s.pnl>=0?'+':''}${s.pnl?s.pnl.toLocaleString():'-'}</div>
+            <div style="font-size:11px;color:${pnlColor};">${s.return_pct>=0?'+':''}${s.return_pct}%</div>
+        </div>
+        <div style="padding:8px;border-radius:6px;background:#f8f9ff;">
+            <div style="color:#999;font-size:10px;">占比 · 账户</div>
+            <div style="font-size:16px;font-weight:700;">${s.alloc_pct}%</div>
+            <div style="font-size:11px;color:#888;">${s.account||'-'}</div>
+        </div>`;
+
+    // 板块信息
+    document.getElementById("stockDetailInfo").innerHTML = `板块: <b>${sector}</b>${s.pnl<0?` · <span style="color:#009900;">需涨 ${needRise}% 回本</span>`:''} · ${s.qty||0}股 ${s.qty>=100?Math.floor(s.qty/100)+'手':''}`;
+
+    // AI 按钮
+    const totalCash = (d.allocation && d.allocation["现金"]) || 0;
+    document.getElementById("stockDetailActions").innerHTML = `
+        <button class="btn btn-sm" style="background:#fff0f0;color:#CC0000;border:1px solid #ffcccc;font-size:11px;padding:4px 10px;" onclick="loadAiBreakeven('${s.name}','${sector}',${s.cost},${s.price},'stockDetailAiBe',this)">🤖 回本预估</button>
+        <button class="btn btn-sm btn-green" style="font-size:11px;padding:4px 10px;" onclick="loadAiAddAdvice('${s.name}','${sector}',${s.qty},${s.cost},${s.price},${totalCash},'stockDetailAiAdd',this)">🤖 加仓分析</button>`;
+
+    // 清理旧 AI 结果
+    document.getElementById("stockDetailAiBe").innerHTML = "";
+    document.getElementById("stockDetailAiAdd").innerHTML = "";
+
+    // K线图
+    loadStockKline(name);
+
+    document.getElementById("stockDetailModal").classList.add("show");
+}
+
+function hideStockDetail() {
+    document.getElementById("stockDetailModal").classList.remove("show");
+    if (stockKlineChart) { stockKlineChart.destroy(); stockKlineChart = null; }
+}
+
+async function loadStockKline(name) {
+    let data = klineDataCache[name];
+    if (!data) {
+        try {
+            const res = await fetch("/api/kline");
+            const result = await res.json();
+            klineDataCache = result.data || {};
+            data = klineDataCache[name];
+        } catch(e) {}
+    }
+    if (!data || data.length < 2) {
+        document.getElementById("stockDetailChart").innerHTML = '<div style="text-align:center;line-height:160px;color:#ccc;font-size:12px;">暂无K线数据</div>';
+        return;
+    }
+    document.getElementById("stockDetailChart").innerHTML = '<canvas id="stockKlineChart"></canvas>';
+    const ctx = document.getElementById("stockKlineChart");
+    if (!ctx) return;
+    if (stockKlineChart) stockKlineChart.destroy();
+
+    const closes = data.map(d => d.close);
+    const firstClose = closes[0], lastClose = closes[closes.length-1];
+    const change = (lastClose - firstClose) / firstClose * 100;
+
+    stockKlineChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: data.map(d => d.date),
+            datasets: [{
+                data: closes,
+                borderColor: change >= 0 ? '#CC0000' : '#009900',
+                backgroundColor: change >= 0 ? 'rgba(204,0,0,0.08)' : 'rgba(0,153,0,0.08)',
+                fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1.5,
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            animation: { duration: 0 },
+            plugins: {
+                legend: { display: false },
+                tooltip: { enabled: false },
+            },
+            scales: {
+                x: { display: false },
+                y: { display: true, position: 'right',
+                    ticks: { font: {size:9}, maxTicksLimit:4 },
+                    grid: { color: '#f0f0f0' }
+                }
+            }
+        }
+    });
+}
+
+// ============ 回本分析 ============
+async function loadBreakeven() {
+    const container = document.getElementById("beContainer");
+    const empty = document.getElementById("beEmpty");
+    container.innerHTML = '<div class="empty-state"><span class="spinner"></span> 加载中...</div>';
+    try {
+        const res = await fetch("/api/breakeven");
+        const data = await res.json();
+        const stocks = data.stocks || [];
+        if (stocks.length === 0) { container.innerHTML=""; empty.style.display="block"; return; }
+        empty.style.display="none";
+
+        // 整体统计
+        const totalCost = stocks.reduce((a,s)=>a+s.total_cost,0);
+        const totalValue = stocks.reduce((a,s)=>a+s.total_value,0);
+        const totalPnL = stocks.reduce((a,s)=>a+s.pnl,0);
+        const overallProgress = totalCost > 0 ? Math.round(totalValue/totalCost*100) : 0;
+        const lossStocks = stocks.filter(s=>s.pnl<0);
+        const profitStocks = stocks.filter(s=>s.pnl>0);
+
+        let html = `<div class="be-card">
+            <div class="be-header"><div class="be-name">📊 整体回本进度</div></div>
+            <div class="be-bar-bg">
+                <div class="be-bar-fill" style="width:${Math.min(overallProgress,100)}%;background:${overallProgress>=100?'#4CAF50':overallProgress>=80?'#FFC000':'#f44336'}"></div>
+                <div class="be-bar-text">${overallProgress}%${totalPnL<0?'（还需涨 '+((totalCost/totalValue-1)*100).toFixed(1)+'%）':' ✅ 已整体盈利'}</div>
+            </div>
+            <div class="be-detail">
+                <div class="be-detail-item"><div class="lbl">总投入</div><div class="val">${totalCost.toLocaleString()}</div></div>
+                <div class="be-detail-item"><div class="lbl">当前市值</div><div class="val">${totalValue.toLocaleString()}</div></div>
+                <div class="be-detail-item"><div class="lbl">累计盈亏</div><div class="val" style="color:${totalPnL>=0?'#f44336':'#009900'}">${totalPnL>=0?'+':''}${totalPnL.toFixed(0)}</div></div>
+                <div class="be-detail-item"><div class="lbl">亏损股票</div><div class="val">${lossStocks.length}/${stocks.length}只</div></div>
+            </div>
+        </div>`;
+
+        // 板块映射
+        const sectorMap = {
+            "科达利": "新能源车（锂电池结构件）",
+            "三花智控": "新能源车（热管理）",
+            "拓普集团": "新能源车（底盘系统）",
+            "天齐锂业": "新能源车（上游锂矿）",
+            "立讯精密": "消费电子/科技",
+            "五粮液": "白酒/消费",
+            "元隆雅图": "文化传媒/促销品",
+        };
+        const getSector = name => sectorMap[name] || "其他";
+
+        // 每只股票
+        for (const s of stocks) {
+            const progress = s.be_progress;
+            const barColor = progress >= 100 ? '#4CAF50' : progress >= 80 ? '#FFC000' : '#f44336';
+            const barWidth = Math.min(progress, 100);
+
+            html += `<div class="be-card">
+                <div class="be-header">
+                    <div><span class="be-name">${s.name}</span> <span class="be-account">${s.account}</span></div>
+                    <span style="font-size:12px;color:#888;">${s.qty}股 · 成本 ${s.cost}元</span>
+                </div>
+                <div class="be-bar-bg">
+                    <div class="be-bar-fill" style="width:${barWidth}%;background:${barColor}"></div>
+                    <div class="be-bar-text">${progress}%${progress>=100?' ✅ 已回本':''}</div>
+                </div>
+                <div class="be-detail">
+                    <div class="be-detail-item"><div class="lbl">现价</div><div class="val">${s.price.toFixed(2)}</div></div>
+                    <div class="be-detail-item"><div class="lbl">盈亏</div><div class="val" style="color:${s.pnl>=0?'#f44336':'#009900'}">${s.pnl>=0?'+':''}${s.pnl.toFixed(0)}</div></div>
+                    <div class="be-detail-item"><div class="lbl">盈亏率</div><div class="val" style="color:${s.pnl>=0?'#f44336':'#009900'}">${s.pnl>=0?'+':''}${Math.abs(s.return_pct).toFixed(1)}%</div></div>
+                    <div class="be-detail-item"><div class="lbl">需涨</div><div class="val">${s.rise_needed>0?s.rise_needed.toFixed(1):'0'}%</div></div>
+                </div>`;
+
+            // 预估回本时间（交易日天数）
+            const sc = s.scenarios || {};
+            const keys = Object.keys(sc);
+            if (keys.length > 0) {
+                html += `<div class="be-scenarios"><div class="row">`;
+                for (const k of keys) {
+                    const days = sc[k].days;
+                    let display;
+                    if (days >= 252) {
+                        display = (days/252).toFixed(1) + '年';
+                    } else if (days >= 22) {
+                        display = Math.round(days/22) + '个月';
+                    } else {
+                        display = days + '天';
+                    }
+                    // 精确天数在tooltip
+                    html += `<div class="scenario" title="${days}个交易日"><div class="lbl">${sc[k].label}</div><div class="val">${display}</div></div>`;
+                }
+                html += `</div><div style="text-align:center;color:#999;margin-top:6px;font-size:11px;">基于日涨幅预估，约22个交易日/月</div>`;
+
+                // AI 实时回本预估
+                const aiBeId = "aiBe-" + s.name;
+                html += `<div style="margin-top:6px;text-align:center;">
+                    <button class="btn btn-sm" style="background:#fff0f0;color:#CC0000;border:1px solid #ffcccc;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;" onclick="loadAiBreakeven('${s.name}','${getSector(s.name)}',${s.cost},${s.price},'${aiBeId}',this)">🤖 实时回本预估</button>
+                </div>
+                <div id="${aiBeId}" style="margin-top:6px;"></div>`;
+
+                // AI 加仓分析
+                const rec = s.recommendation;
+                const aiResultId = "aiResult-" + s.name;
+                const cashAvail = rec ? rec.cash_available : 0;
+                html += `<div style="margin-top:8px;text-align:center;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+                    <button class="btn btn-sm btn-primary" onclick="showAddCheck('${s.name}')">🧮 补仓算账（先过五关）</button>
+                    <button class="btn btn-sm btn-green" onclick="loadAiAddAdvice('${s.name}','${getSector(s.name)}',${s.qty},${s.cost},${s.price},${cashAvail},'${aiResultId}',this)">🤖 AI 加仓分析</button>
+                </div>
+                <div id="${aiResultId}" style="margin-top:6px;"></div>`;
+                html += `</div></div>`;
+            } else if (s.pnl >= 0) {
+                html += `<div class="be-already">✅ 已回本，当前盈利 ${s.pnl.toFixed(0)} 元</div>`;
+                html += `</div>`;
+            }
+        }
+
+        container.innerHTML = html;
+    } catch(e) {
+        container.innerHTML = `<div class="empty-state">⚠️ 加载失败</div>`;
+    }
+}
+
+// ============ AI 实时回本预估 ============
+async function loadAiBreakeven(name, sector, cost, price, resultId, btn) {
+    const resultDiv = document.getElementById(resultId);
+    if (!resultDiv) return;
+    btn.disabled = true;
+    btn.textContent = '🤖 分析中...';
+    resultDiv.innerHTML = '<div style="text-align:center;padding:8px;"><span class="spinner"></span> 搜索市场信息并分析...</div>';
+    try {
+        const res = await fetch("/api/breakeven-realistic", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ name, sector, cost, price })
+        });
+        const data = await res.json();
+        if (data.error || !data.scenarios) {
+            resultDiv.innerHTML = `<div style="padding:8px 10px;background:#fff0f0;border-radius:6px;font-size:12px;color:#CC0000;">⚠️ ${data.error || '分析失败'}</div>`;
+            btn.disabled = false;
+            btn.textContent = '🤖 实时回本预估';
+            return;
+        }
+        const sc = data.scenarios;
+        const keys = Object.keys(sc);
+        const riseNeeded = data.rise_needed;
+        let html = `<div style="padding:8px 10px;background:#fff0f0;border-radius:8px;font-size:12px;">
+            <div style="font-weight:600;color:#CC0000;margin-bottom:4px;">🤖 AI 实时回本预估（基于最新市场消息）</div>
+            <div class="row" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">`;
+        for (const k of keys) {
+            const s = sc[k];
+            const days = s.days;
+            let display;
+            if (days >= 252) display = (days/252).toFixed(1) + '年';
+            else if (days >= 22) display = Math.round(days/22) + '个月';
+            else display = days + '天';
+            html += `<div style="background:#fff;padding:6px 10px;border-radius:6px;text-align:center;min-width:80px;">
+                <div style="color:#999;font-size:10px;">${s.label}</div>
+                <div style="font-weight:600;font-size:14px;color:#CC0000;">${display}</div>
+                <div style="color:#666;font-size:10px;">月涨 ${s.monthly_rise}%</div>
+            </div>`;
+        }
+        html += `</div>`;
+        // 理由
+        const reasons = keys.map(k => `<span style="color:#555;font-size:11px;">${sc[k].label}: ${sc[k].reason}</span>`).join('<br>');
+        html += `<div style="margin-top:4px;color:#999;font-size:10px;">${reasons}</div>`;
+        html += `<div style="margin-top:2px;font-size:10px;color:#bbb;">点击刷新重新获取最新判断</div></div>`;
+        resultDiv.innerHTML = html;
+    } catch(e) {
+        resultDiv.innerHTML = `<div style="padding:8px 10px;background:#fff0f0;border-radius:6px;font-size:12px;color:#CC0000;">⚠️ 请求失败: ${e.message}</div>`;
+    }
+    btn.disabled = false;
+    btn.textContent = '🤖 实时回本预估';
+}
+
+// ============ AI 加仓分析 ============
+async function loadAiAddAdvice(name, sector, qty, cost, price, cash, resultId, btn) {
+    const resultDiv = document.getElementById(resultId);
+    if (!resultDiv) return;
+
+    btn.disabled = true;
+    btn.textContent = '🤖 AI 分析中...';
+    resultDiv.innerHTML = '<div style="text-align:center;padding:8px;"><span class="spinner"></span> 搜索市场消息并分析...</div>';
+
+    try {
+        const res = await fetch("/api/add-position-advice", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ name, sector, qty, cost, price, cash })
+        });
+        const data = await res.json();
+
+        if (data.error) {
+            resultDiv.innerHTML = `<div style="padding:8px 10px;background:#fff0f0;border-radius:6px;font-size:12px;color:#CC0000;">⚠️ ${data.error}</div>`;
+            btn.disabled = false;
+            btn.textContent = '🤖 AI 加仓分析';
+            return;
+        }
+
+        const addText = data.should_add ? '✅ 建议加仓' : '⏸️ 暂不加仓';
+        const colorClass = data.should_add ? '#e8f5e9' : '#fff8e1';
+        const borderColor = data.should_add ? '#4CAF50' : '#FFC000';
+        const textColor = data.should_add ? '#2e7d32' : '#f57f17';
+
+        let lotsText = '';
+        if (data.suggested_lots > 0) {
+            const cashNeeded = price * data.suggested_lots * 100;
+            lotsText = `<span>建议加 <b>${data.suggested_lots}手</b> (需 ${cashNeeded.toLocaleString()}元)</span>`;
+        }
+
+        resultDiv.innerHTML = `<div style="padding:10px 12px;background:${colorClass};border-radius:8px;border-left:4px solid ${borderColor};font-size:13px;">
+            <div style="font-weight:600;color:${textColor};margin-bottom:4px;">${addText} · ${data.timing || ''}</div>
+            <div style="color:#555;font-size:12px;margin-bottom:4px;">${data.reason || ''}</div>
+            <div style="display:flex;gap:12px;font-size:12px;color:#555;flex-wrap:wrap;">
+                ${data.suggested_lots !== undefined ? lotsText : ''}
+                <span>板块: <b>${sector}</b></span>
+            </div>
+            ${data.risk_tip ? `<div style="margin-top:4px;color:#f44336;font-size:11px;">⚠️ ${data.risk_tip}</div>` : ''}
+            <div style="margin-top:4px;font-size:10px;color:#bbb;">基于最新市场消息分析</div>
+        </div>`;
+    } catch(e) {
+        resultDiv.innerHTML = `<div style="padding:8px 10px;background:#fff0f0;border-radius:6px;font-size:12px;color:#CC0000;">⚠️ 请求失败: ${e.message}</div>`;
+    }
+
+    btn.disabled = false;
+    btn.textContent = '🤖 AI 加仓分析';
+}
+
+// ============ 编辑持仓 ============
+let editHoldingsData = [];
+let editHoldingsUnlocked = false;
+
+function showEditHoldings() {
+    if (!editHoldingsUnlocked) {
+        pwdPendingAction = null;
+        document.getElementById("pwdModal").classList.add("show");
+        document.getElementById("pwdInput").value = "";
+        document.getElementById("pwdError").style.display = "none";
+        setTimeout(() => document.getElementById("pwdInput").focus(), 100);
+        return;
+    }
+    openEditModal();
+}
+
+function submitPwd() {
+    const pwd = document.getElementById("pwdInput").value;
+    if (String(pwd).trim() === "9804") {
+        document.getElementById("pwdModal").classList.remove("show");
+        editHoldingsUnlocked = true;
+        // 执行密码挂起的操作
+        if (typeof pwdPendingAction === 'function') {
+            const fn = pwdPendingAction;
+            pwdPendingAction = null;
+            fn();
+        } else {
+            openEditModal();
+        }
+    } else {
+        document.getElementById("pwdError").style.display = "block";
+        document.getElementById("pwdInput").focus();
+    }
+}
+
+function cancelPwd() {
+    document.getElementById("pwdModal").classList.remove("show");
+    pwdPendingAction = null;
+}
+
+function openEditModal() {
+    const modal = document.getElementById("editHoldingsModal");
+    modal.classList.add("show");
+    // 从完整原始数据加载（含股票、黄金、现金）
+    const d = state.data;
+    if (d && d.holdings_raw) {
+        editHoldingsData = d.holdings_raw.map(h => {
+            // 现金的金额存在 market_value 而非 qty
+            const isCash = h.type === "现金";
+            return {
+                type: h.type,
+                account: h.account,
+                name: h.name,
+                code: h.code || "",
+                qty: isCash
+                    ? (h.market_value || "")
+                    : (h.qty !== null && h.qty !== undefined ? h.qty : ""),
+                cost: h.cost !== null && h.cost !== undefined ? h.cost : "",
+                note: h.note || "",
+            };
+        });
+        // 检查每个有股票的账户是否有现金行，没有则补充
+        const stockAccounts = new Set(editHoldingsData.filter(r => r.type === "股票").map(r => r.account));
+        const cashAccounts = new Set(editHoldingsData.filter(r => r.type === "现金").map(r => r.account));
+        for (const acct of stockAccounts) {
+            if (!cashAccounts.has(acct)) {
+                editHoldingsData.push({
+                    type: "现金", account: acct, name: "可用资金",
+                    code: "", qty: "", cost: "", note: "账户余额",
+                });
+            }
+        }
+    } else if (d && d.stocks) {
+        // 降级方案：只有 stocks 数据
+        editHoldingsData = d.stocks.map(s => ({
+            type: "股票",
+            account: s.account || "A股主账户",
+            name: s.name,
+            code: STOCK_CODES[s.name] || "",
+            qty: s.qty || "",
+            cost: s.cost || "",
+            note: "",
+        }));
+    }
+    renderEditTable();
+}
+
+function hideEditHoldings() {
+    document.getElementById("editHoldingsModal").classList.remove("show");
+}
+
+function renderEditTable() {
+    const tbody = document.getElementById("editHoldingsBody");
+    tbody.innerHTML = editHoldingsData.map((row, i) => {
+        if (row._deleted) return '';
+        const isStock = row.type === "股票";
+        return `<tr>
+            <td style="text-align:center;"><button class="btn btn-sm" style="background:none;border:none;color:#CC0000;cursor:pointer;font-size:16px;" onclick="deleteEditRow(${i})">&times;</button></td>
+            <td>
+                <select style="padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;" onchange="editHoldingsData[${i}].type=this.value;renderEditTable()">
+                    <option value="股票" ${isStock?'selected':''}>股票</option>
+                    <option value="现金" ${!isStock?'selected':''}>现金</option>
+                </select>
+            </td>
+            <td><input value="${escapeHtml(row.account)}" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;" onchange="editHoldingsData[${i}].account=this.value"></td>
+            <td><input value="${escapeHtml(row.name)}" style="width:90px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;" ${isStock?'':'readonly style="color:#999;width:90px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;"'} onchange="editHoldingsData[${i}].name=this.value"></td>
+            <td><input value="${row.code}" style="width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;" ${isStock?'':'readonly style="color:#999;width:80px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;"'} onchange="editHoldingsData[${i}].code=this.value"></td>
+            <td><input type="number" value="${row.qty}" style="width:70px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;" onchange="editHoldingsData[${i}].qty=this.value"></td>
+            <td><input type="number" step="0.01" value="${row.cost}" style="width:70px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;" onchange="editHoldingsData[${i}].cost=this.value"></td>
+            <td><input value="${escapeHtml(row.note)}" style="width:90px;padding:4px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px;" onchange="editHoldingsData[${i}].note=this.value"></td>
+        </tr>`;
+    }).join("");
+}
+
+function addEditRow(type) {
+    editHoldingsData.push({
+        type: type || "股票",
+        account: type === "cash" ? "A股主账户" : "A股主账户",
+        name: "",
+        code: "",
+        qty: "",
+        cost: "",
+        note: "",
+    });
+    if (type === "cash") editHoldingsData[editHoldingsData.length-1].type = "现金";
+    renderEditTable();
+}
+
+function deleteEditRow(idx) {
+    const row = editHoldingsData[idx];
+    if (row && row.name && !confirm(`从持仓里删除「${row.name}」？点保存后才会生效。`)) return;
+    editHoldingsData[idx]._deleted = true;
+    renderEditTable();
+}
+
+async function saveEditHoldings() {
+    const btn = document.getElementById("saveHoldingsBtn");
+    btn.disabled = true; btn.textContent = "💾 保存中...";
+
+    // 过滤删除行和空行
+    const valid = editHoldingsData.filter(r => !r._deleted && r.name && r.name.trim());
+    const payload = valid.map(r => ({
+        类别: r.type,
+        账户: r.account,
+        名称: r.name.trim(),
+        代码: r.code.trim(),
+        数量: r.qty ? parseFloat(r.qty) : (r.type === "现金" ? 0 : null),
+        成本价: r.cost ? parseFloat(r.cost) : null,
+        备注: r.note,
+    }));
+
+    try {
+        const res = await fetch("/api/holdings-save", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ holdings: payload })
+        });
+        const data = await res.json();
+        if (data.success) {
+            hideEditHoldings();
+            // 刷新页面数据
+            refreshData();
+        } else {
+            alert("保存失败: " + (data.error || "未知错误"));
+        }
+    } catch(e) {
+        alert("保存失败: " + e.message);
+    }
+    btn.disabled = false; btn.textContent = "💾 保存";
+}
+
+// 股票代码映射（用于编辑持仓自动补全）
+const STOCK_CODES = {
+    "科达利": "002850",
+    "三花智控": "002050",
+    "拓普集团": "601689",
+    "立讯精密": "002475",
+    "五粮液": "000858",
+    "天齐锂业": "002466",
+    "元隆雅图": "002878",
+    "半导体ETF": "512480",
+    "芯片ETF": "512760",
+    "半导体芯片ETF": "159995",
+};
+
+// ============ 工具 ============
+function escapeHtml(t) {
+    return t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function marked(text) {
+    // 简单的 Markdown 渲染
+    let t = escapeHtml(text);
+    t = t.replace(/### (.+)/g, '<b>$1</b>');
+    t = t.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+    t = t.replace(/\*(.+?)\*/g, '<i>$1</i>');
+    t = t.replace(/^- (.+)/gm, '• $1');
+    t = t.replace(/\n/g, '<br>');
+    t = t.replace(/<br><br>/g, '</p><p>');
+    t = '<p>' + t + '</p>';
+    t = t.replace(/<p><\/p>/g, '');
+    return t;
+}
+
+// ============ 今日晨报 ============
+async function loadToday(force) {
+    const body = document.getElementById("briefBody");
+    const badge = document.getElementById("briefSource");
+    body.innerHTML = '<span class="spinner"></span> 正在生成今日晨报…';
+    badge.textContent = "生成中…";
+    try {
+        const opts = force ? {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({force: true}),
+        } : {};
+        const res = await fetch("/api/briefing", opts);
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        const b = d.briefing || {};
+        body.innerHTML = marked(b.content || "暂无内容");
+        badge.textContent = (b.source === "AI" ? "AI 生成" : "规则生成") + " · " + (b.time || "");
+        state.briefLoaded = true;
+        if (d.snapshot) { state.insights = d.snapshot; renderTodaySide(d.snapshot); }
+        else {
+            await loadInsights(true);
+            if (state.insights) renderTodaySide(state.insights);
+        }
+    } catch (e) {
+        body.textContent = "晨报加载失败：" + e.message;
+        badge.textContent = "失败";
+    }
+}
+
+function todayPnlValue() {
+    const d = state.data;
+    if (!d) return null;
+    const hist = d.history || [];
+    const todayStr = new Date().toLocaleDateString("en-CA");
+    let prev = null;
+    for (let i = hist.length - 1; i >= 0; i--) {
+        if (hist[i].date !== todayStr) { prev = hist[i].total; break; }
+    }
+    return prev === null ? null : d.total_value - prev - (d.today_net_flow || 0);
+}
+
+function renderTodayMetrics(snap) {
+    const pf = snap.portfolio || {};
+    const h = snap.health || {};
+    const rec = snap.recovery || {};
+    const d = state.data || {};
+    const today = todayPnlValue();
+    const fmt = v => v === null || v === undefined ? "--" : (v >= 0 ? "+" : "") + Math.round(v).toLocaleString();
+    const col = v => v === null || v === undefined ? "#555" : v >= 0 ? "#CC0000" : "#009900";
+    const healthColor = h.score >= 80 ? "#2E7D32" : h.score >= 65 ? "#A67C00" : "#CC0000";
+    const healthSub = (h.deductions || []).slice(0, 2).map(x => x.reason).join("；") || "无明显扣分";
+    const tiles = [
+        { label: "今日盈亏", value: fmt(today), sub: "较前日收盘" + (state.lastUpdated ? ` · 行情 ${fmtUpdatedAt(state.lastUpdated)}` : ""), color: col(today) },
+        { label: "累计盈亏", value: fmt(pf.total_pnl), sub: "含已实现", color: col(pf.total_pnl) },
+        { label: "回本需涨", value: (rec.need_pct || 0).toFixed(1) + "%", sub: `还差 ${Math.round(rec.need_amount || 0).toLocaleString()} 元`, color: "#CC0000" },
+        { label: "账户健康分", value: `${h.score || 0}/100`, sub: `${h.level || ""} · ${healthSub}`, color: healthColor },
+    ];
+    document.getElementById("todayMetrics").innerHTML = tiles.map(t =>
+        `<div class="metric-tile"><div class="label">${t.label}</div>
+         <div class="value" style="color:${t.color}">${t.value}</div><div class="sub">${escapeHtml(t.sub)}</div></div>`).join("");
+}
+
+function renderTodaySide(snap) {
+    state.insights = snap;
+    const v = snap.verdict || {};
+    const card = document.getElementById("verdictCard");
+    card.className = "verdict-card " + (v.tone || "");
+    document.getElementById("verdictHeadline").textContent = v.headline || "今天：持有观察";
+    document.getElementById("verdictReasons").innerHTML = (v.reasons || [])
+        .map(r => `<span>${escapeHtml(r)}</span>`).join("");
+    document.getElementById("verdictTriggers").innerHTML = (v.triggers || [])
+        .map(t => `<div><span style="color:#2F5496;">→</span><span>${escapeHtml(t)}</span></div>`).join("");
+    document.getElementById("glossaryList").innerHTML = (snap.glossary || [])
+        .map(g => `<div class="glossary-item"><b>${escapeHtml(g.term)}</b>：${escapeHtml(g.meaning)}</div>`).join("");
+
+    renderTodayMetrics(snap);
+    renderDiscipline(snap);
+    renderStructure(snap);
+
+    // 亏损归因：只显示拖累最大的 3 只
+    const losses = (snap.attribution || {}).items?.filter(x => x.pnl < 0).slice(0, 3) || [];
+    const maxAbs = Math.max(...losses.map(x => Math.abs(x.pnl)), 1);
+    document.getElementById("lossAttribution").innerHTML = losses.length ? losses.map(x => `
+        <div class="loss-row">
+            <span class="lname" title="${escapeHtml(x.name)}">${escapeHtml(x.name)}${x.cleared ? '<span class="cleared-tag">已清仓</span>' : ''}</span>
+            <span class="ltrack"><span class="lfill" style="width:${Math.max(Math.abs(x.pnl) / maxAbs * 100, 4)}%"></span></span>
+            <span class="lamt">${Math.round(x.pnl).toLocaleString()}</span>
+            <span class="lshare">${x.share}%</span>
+        </div>`).join("") : '<div style="font-size:12px;color:#999;">暂无亏损归因</div>';
+
+    // 回本距离
+    const rec = snap.recovery || {};
+    const positions = (rec.positions || []).slice(0, 4);
+    const totalHtml = `<div class="rec-total">账户整体还需上涨 <b style="color:#CC0000;">${(rec.need_pct || 0).toFixed(1)}%</b>
+        （约 ${Math.round(rec.need_amount || 0).toLocaleString()} 元）才回到本金</div>`;
+    document.getElementById("recoveryList").innerHTML = totalHtml + positions.map(p => `
+        <div class="rec-row">
+            <div class="rec-top"><span>${escapeHtml(p.name)} <span style="color:#999;">${p.qty} 股</span></span>
+            <span class="need">需涨 ${p.rise_needed.toFixed(1)}%</span></div>
+            <div class="rec-bar"><i style="width:${Math.min(p.price / p.cost * 100, 100)}%"></i></div>
+        </div>`).join("");
+
+    // 风险 KPI 与诊断页保持一致
+    const riskCount = (snap.risks || []).filter(r => r.level !== "低").length;
+    const kpi = document.getElementById("kpiRisk");
+    if (kpi) {
+        kpi.textContent = riskCount;
+        kpi.style.color = riskCount > 0 ? "#CC0000" : "#009900";
+        document.getElementById("kpiRiskLabel").textContent = riskCount > 0 ? "待处理" : "无风险";
+    }
+    renderRisks(snap.risks || []);
+}
+
+function renderDiscipline(snap) {
+    const d = snap.discipline || {};
+    const gates = d.gates || [];
+    document.getElementById("disciplineGates").innerHTML = gates.map(g => {
+        const cls = g.ok === true ? "pass" : g.ok === false ? "fail" : "pending";
+        const icon = g.ok === true ? "✓" : g.ok === false ? "✗" : "○";
+        return `<span class="gate-chip ${cls}" title="${escapeHtml(g.current || "")}">${icon} <b>${escapeHtml(g.label)}</b> ${escapeHtml(g.current || "")}</span>`;
+    }).join("");
+
+    const mv = state.marketView;
+    const note = document.getElementById("disciplineAiNote");
+    if (note) {
+        if (!mv) {
+            note.innerHTML = "";
+        } else {
+            const ruleStance = (mv.rule || {}).stance || "";
+            const diff = ruleStance && ruleStance !== mv.stance;
+            note.innerHTML = `<span class="ai-dot">🧠</span> AI 判断（${escapeHtml((mv.as_of || "").slice(11, 16))}，置信度${escapeHtml(mv.confidence || "低")}）：<b>${escapeHtml(mv.stance || "")}</b>，买入权限「${escapeHtml(mv.buy_permission || "")}」${diff ? `；机械规则为「${escapeHtml(ruleStance)}」，两者不一致时按 AI 的结论再确认一次` : ""}`;
+        }
+    }
+
+    const items = [];
+    (d.take_profit || []).forEach(t => items.push(
+        `<div class="discipline-item take-profit">🎯 ${escapeHtml(t.message)}<br>
+         <button class="btn btn-sm btn-outline" onclick='logDisciplineDecision("减仓", ${JSON.stringify(t.name)}, ${t.target_price}, ${JSON.stringify(t.message)}, "待执行")'>记为决策</button>
+         <button class="btn btn-sm btn-outline" onclick='logDisciplineDecision("减仓", ${JSON.stringify(t.name)}, ${t.target_price}, ${JSON.stringify(t.message)}, "不执行")'>不执行</button>
+         </div>`));
+    (d.red_lines || []).forEach(r => items.push(
+        `<div class="discipline-item red-line">⛔ ${escapeHtml(r.message)}<br>
+         <span class="muted">执行后这笔亏损就锁定了；不执行请记录理由，别默默拖。</span><br>
+         <button class="btn btn-sm btn-outline" onclick='logDisciplineDecision("卖出", ${JSON.stringify(r.name)}, ${r.cut_price}, ${JSON.stringify(r.message)}, "待执行")'>记为决策</button>
+         <button class="btn btn-sm btn-outline" onclick='logDisciplineDecision("卖出", ${JSON.stringify(r.name)}, ${r.cut_price}, ${JSON.stringify(r.message)}, "不执行")'>不执行</button>
+         </div>`));
+
+    const gold = d.gold;
+    const tiers = d.gold_tiers || [];
+    if (gold && tiers.length) {
+        const next = tiers.find(t => !t.reached);
+        const text = next
+            ? `下一个卖出档位 ${next.label} ${next.price} 元/克（还要涨 ${next.distance_pct}%），到价先卖 1/3 ≈ ${next.grams} 克（约 ${Math.round(next.amount).toLocaleString()} 元）。`
+            : `已到卖出档位，按纪律先卖 1/3。`;
+        items.push(`<div class="discipline-item gold">🪙 黄金 ${gold.grams} 克（成本 ${gold.cost} 元/克，现价 ${gold.price} 元/克）：${escapeHtml(text)}</div>`);
+    }
+    document.getElementById("disciplineAlerts").innerHTML = items.join("")
+        || `<div class="discipline-item muted">当前没有触发止盈或红线。</div>`;
+
+    const max = d.suggested_max || 0;
+    document.getElementById("disciplineMax").textContent = max > 0
+        ? `按纪律，今天最多可补 ${Math.round(max).toLocaleString()} 元`
+        : "按纪律，今天可补额度为 0（现金低于 20% 或已触红线）";
+}
+
+// ============ AI 市场判断 ============
+async function loadMarketView(force) {
+    const body = document.getElementById("marketBody");
+    const btn = document.getElementById("marketRefreshBtn");
+    body.innerHTML = '<span class="spinner"></span> 正在看大盘、账户净值和最新新闻，约 10–30 秒…';
+    btn.disabled = true;
+    try {
+        const opts = force ? {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({force: true}),
+        } : {};
+        const res = await fetch("/api/market-view", opts);
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        renderMarketView(d);
+    } catch (e) {
+        body.textContent = "市场判断加载失败：" + e.message;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function renderMarketView(d) {
+    state.marketView = d;
+    if (state.insights) renderDiscipline(state.insights);
+    const stance = d.stance || "观察中";
+    const badge = document.getElementById("marketStance");
+    badge.textContent = `${stance} · 置信度${d.confidence || "低"}`;
+    badge.className = "market-stance " + (stance === "已企稳" ? "good" : stance === "未企稳" ? "bad" : "warn");
+    badge.style.display = "";
+
+    const perm = d.buy_permission || "";
+    const permCls = perm === "可以恢复买入" ? "good" : perm === "只能小幅试买" ? "warn" : "bad";
+    const sl = d.stop_loss || "暂不止损";
+    const slCls = sl.includes("该止损") ? "bad" : sl.includes("观察") ? "warn" : "good";
+    const row = (k, v) => v ? `<div class="row"><span class="k">${k}</span>${escapeHtml(v)}</div>` : "";
+    const short = t => t.length > 28 ? t.slice(0, 28) + "…" : t;
+    const srcList = d.sources || [];
+    const evidence = !srcList.length && (d.evidence || []).length
+        ? `<ul class="evidence">${d.evidence.map(x => `<li>${escapeHtml(x)}</li>`).join("")}</ul>` : "";
+    const sources = srcList.length
+        ? `<div class="market-sources">依据新闻：${srcList.slice(0, 3).map(s =>
+            s.url ? `<a href="${escapeHtml(s.url)}" target="_blank" rel="noopener" title="${escapeHtml(s.title)}">${escapeHtml(short(s.title))}</a>`
+                  : escapeHtml(short(s.title))).join(" · ")}</div>` : "";
+    const rule = d.rule || {};
+    const ruleText = rule.trough_date
+        ? `机械规则：低点 ${rule.trough_date}，已过 ${rule.days_since_low} 个净值日，回升 ${Number(rule.rebound_pct || 0).toFixed(1)}%`
+        : "";
+    const gates = (d.gates || []).map(g =>
+        `<span class="gate-chip ${g.ok === true ? "pass" : g.ok === false ? "fail" : "pending"}">${g.ok === true ? "✓" : g.ok === false ? "✗" : "○"} ${escapeHtml(g.label)}</span>`).join("");
+
+    document.getElementById("marketBody").innerHTML = `
+        <div class="row"><span class="k">今天能不能买：</span>
+            <span class="market-stance ${permCls}" style="font-size:12.5px;">${escapeHtml(perm || "继续暂停")}</span></div>
+        <div class="row"><span class="k">该不该止损：</span>
+            <span class="market-stance ${slCls}" style="font-size:12.5px;">${escapeHtml(sl || "暂不止损")}</span>
+            ${d.stop_loss_note ? `<div style="margin-top:4px;">${escapeHtml(d.stop_loss_note)}</div>` : ""}</div>
+        ${row("一句话", d.summary)}
+        ${row("大盘", d.market_note)}
+        ${row("账户", d.account_note)}
+        ${row("为什么", d.reason)}
+        ${row("改口条件", d.what_changes)}
+        ${evidence}
+        ${sources}
+        <div class="market-meta">
+            <span>${d.source === "AI" ? "AI 结合新闻判断" : "规则判断（未配置 AI Key）"} · ${escapeHtml(d.as_of || "")}</span>
+            ${d.source === "AI" ? "" : ""}
+        </div>
+        <div class="market-meta"><span>${escapeHtml(ruleText)}</span></div>
+        <div class="gate-row">${gates}</div>`;
+}
+
+function renderStructure(snap) {
+    const s = snap.structure || {};
+    const badge = document.getElementById("structureBadge");
+    const body = document.getElementById("structureBody");
+    if (!s.count) {
+        badge.textContent = "无持仓";
+        body.innerHTML = '<div style="font-size:12.5px;color:#888;">目前没有股票持仓。</div>';
+        return;
+    }
+    badge.textContent = `${s.count} 只 · ${s.verdict}`;
+    badge.className = "badge";
+    if (s.verdict === "偏多") { badge.style.background = "#fff4e5"; badge.style.color = "#A66600"; }
+    else if (s.verdict === "偏少") { badge.style.background = "#eef3ff"; badge.style.color = "#2F5496"; }
+    else { badge.style.background = "#eef8f0"; badge.style.color = "#2E7D32"; }
+
+    const points = (s.points || []).map(p => {
+        const warn = /清掉|卖出|偏重|重复/.test(p);
+        return `<div class="structure-item ${warn ? "warn" : ""}">${escapeHtml(p)}</div>`;
+    }).join("");
+    body.innerHTML = `<div style="font-size:13px;line-height:1.7;color:#333;">${escapeHtml(s.headline || "")}</div>${points}`;
+}
+
+// ============ 补仓算账 ============
+function showAddCheck(name) {
+    const stocks = (state.data && state.data.stocks) || [];
+    const sel = document.getElementById("acName");
+    sel.innerHTML = stocks.map(s => `<option value="${escapeHtml(s.name)}">${escapeHtml(s.name)}（${s.qty} 股）</option>`).join("");
+    if (name && stocks.some(s => s.name === name)) sel.value = name;
+    document.getElementById("acFundamental").checked = false;
+    document.getElementById("acResult").style.display = "none";
+    document.getElementById("acError").style.display = "none";
+    document.getElementById("acLots").value = 1;
+    onAddCheckNameChange();
+    document.getElementById("addCheckModal").classList.add("show");
+}
+
+function hideAddCheck() {
+    document.getElementById("addCheckModal").classList.remove("show");
+}
+
+function onAddCheckNameChange() {
+    const s = ((state.data && state.data.stocks) || []).find(x => x.name === document.getElementById("acName").value);
+    if (s) document.getElementById("acPrice").value = (s.price || 0).toFixed(3);
+    updateAcQtyPreview();
+    document.getElementById("acResult").style.display = "none";
+}
+
+function updateAcQtyPreview() {
+    const price = parseFloat(document.getElementById("acPrice").value) || 0;
+    const lots = parseInt(document.getElementById("acLots").value) || 0;
+    const shares = lots * 100;
+    const amount = shares * price;
+    const s = ((state.data && state.data.stocks) || []).find(x => x.name === document.getElementById("acName").value);
+    document.getElementById("acQtyPreview").value = s && lots > 0 && price > 0
+        ? `本次 ${lots} 手（${shares} 股）约 ${Math.round(amount).toLocaleString()} 元；${s.qty} → ${s.qty + shares} 股`
+        : "—";
+}
+
+function invalidateAddCheck() {
+    updateAcQtyPreview();
+    document.getElementById("acResult").style.display = "none";
+}
+
+async function runAddCheck() {
+    const name = document.getElementById("acName").value;
+    const lots = parseInt(document.getElementById("acLots").value) || 0;
+    const price = parseFloat(document.getElementById("acPrice").value) || 0;
+    const fundamentals_ok = document.getElementById("acFundamental").checked;
+    const err = document.getElementById("acError");
+    const btn = document.getElementById("acRunBtn");
+    if (!name) { err.textContent = "请选择股票"; err.style.display = "block"; return; }
+    if (lots <= 0) { err.textContent = "补仓手数至少 1 手"; err.style.display = "block"; return; }
+    err.style.display = "none";
+    btn.disabled = true; btn.textContent = "算账中…";
+    try {
+        const res = await fetch("/api/add-check", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, lots, price, fundamentals_ok })
+        });
+        const d = await res.json();
+        if (!res.ok || !d.success) throw new Error(d.error || "算账失败");
+        renderAddCheck(d);
+    } catch (e) {
+        err.textContent = e.message; err.style.display = "block";
+    } finally {
+        btn.disabled = false; btn.textContent = "开始算账";
+    }
+}
+
+function renderAddCheck(d) {
+    const gateHtml = (d.gates || []).map(g => `
+        <div class="ac-gate"><span>${g.ok ? '<span class="ok">✓</span>' : '<span class="no">✗</span>'} ${escapeHtml(g.label)}</span>
+        <span style="color:#666;text-align:right;">${escapeHtml(g.current || "")}<br><span style="font-size:11px;color:#999;">${escapeHtml(g.detail || "")}</span></span></div>`).join("");
+    const verdict = d.allowed
+        ? `<div class="ac-verdict pass">✅ 五关全过，按纪律可以补。</div>`
+        : `<div class="ac-verdict fail">⛔ 先别补：${escapeHtml((d.failed || []).join("、"))} 没过。</div>`;
+    const fmt = v => (v >= 0 ? "+" : "") + Math.round(v).toLocaleString();
+    const html = `${verdict}
+        <div class="ac-grid">
+            <div><span>本次买入</span><br><b>${d.lots} 手 · ${d.qty} 股 · ${Math.round(d.amount).toLocaleString()} 元</b></div>
+            <div><span>补后持股</span><br><b>${d.qty_old} → ${d.qty_new} 股</b></div>
+            <div><span>成本变化</span><br><b>${d.cost_old.toFixed(3)} → ${d.cost_new.toFixed(3)}</b>（${d.cost_change.toFixed(2)}）</div>
+            <div><span>补后单票占比</span><br><b>${d.single_pct}%</b>（上限 20%）</div>
+            <div><span>补后现金</span><br><b>${Math.round(d.cash_after).toLocaleString()} 元（${d.cash_after_pct}%）</b></div>
+            <div><span>回本需涨</span><br><b>${d.rise_before}% → ${d.rise_after}%</b></div>
+            <div><span>再跌 10% 后浮亏</span><br><b style="color:#009900;">${fmt(d.drop_10_loss)} 元</b></div>
+            <div><span>再跌 20% 后浮亏</span><br><b style="color:#009900;">${fmt(d.drop_20_loss)} 元</b></div>
+        </div>
+        <div style="font-size:12px;color:#666;line-height:1.6;margin-bottom:8px;">
+            ${gateHtml}
+        </div>
+        <div style="font-size:11.5px;color:#999;">按现价 ${d.price} 计算，未含手续费。这只是算账，不会下单；成交后请到「持仓 → 记一笔交易」同步持仓和现金。</div>`;
+    const box = document.getElementById("acResult");
+    box.innerHTML = html;
+    box.style.display = "block";
+}
+
+function renderRisks(rows) {
+    const c = document.getElementById("risksContainer");
+    c.innerHTML = rows.map(r => {
+        const cls = r.level === "高" ? "risk-high" : r.level === "中" ? "risk-mid" : "";
+        const steps = (r.steps || []).length
+            ? `<ol class="risk-steps">${r.steps.map(s => `<li>${escapeHtml(s)}</li>`).join("")}</ol>`
+            : "";
+        return `<div class="risk-item ${cls}"><div class="level">${r.level === "高" ? "🔴 高风险" : r.level === "中" ? "🟡 中风险" : "🟢 低风险"} · ${escapeHtml(r.title)}</div>
+            <div class="issue">${escapeHtml(r.detail)}</div>
+            <div class="suggestion">→ ${escapeHtml(r.action)}</div>${steps}</div>`;
+    }).join("");
+    document.getElementById("risksEmpty").style.display = rows.length ? "none" : "block";
+}
+
+// ============ 深度诊断 ============
+async function loadInsights(force) {
+    if (state.insights && !force) { renderInsights(state.insights); return; }
+    try {
+        const res = await fetch("/api/insights");
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        state.insights = d;
+        renderInsights(d);
+    } catch (e) {
+        document.getElementById("insightMetrics").innerHTML =
+            `<div style="font-size:12px;color:#CC0000;">诊断加载失败：${escapeHtml(e.message)}</div>`;
+    }
+}
+
+function renderInsights(d) {
+    const m = (d.performance || {}).metrics || {};
+    const sign = v => (v >= 0 ? "+" : "") + v.toFixed(1) + "%";
+    const color = v => v >= 0 ? "#CC0000" : "#009900";
+    const tiles = [
+        { label: "区间收益", value: sign(m.account_return || 0), sub: (m.start_date || "") + " 起", color: color(m.account_return || 0) },
+        { label: m.benchmark_name || "沪深300", value: sign(m.benchmark_return || 0), sub: "同期基准", color: color(m.benchmark_return || 0) },
+        { label: "超额收益", value: (m.excess_return >= 0 ? "+" : "") + (m.excess_return || 0).toFixed(1) + "pp", sub: "跑赢基准", color: color(m.excess_return || 0) },
+        { label: "最大回撤", value: (m.max_drawdown || 0).toFixed(1) + "%", sub: "区间峰值回落", color: "#009900" },
+        { label: "年化波动", value: (m.volatility || 0).toFixed(1) + "%", sub: "日收益标准差", color: "#555" },
+        { label: "上涨天数占比", value: (m.win_rate || 0).toFixed(0) + "%", sub: `共 ${m.trading_days || 0} 个快照`, color: "#555" },
+    ];
+    document.getElementById("insightMetrics").innerHTML = tiles.map(t =>
+        `<div class="metric-tile"><div class="label">${t.label}</div>
+         <div class="value" style="color:${t.color}">${t.value}</div><div class="sub">${t.sub}</div></div>`).join("");
+
+    const points = (d.performance || {}).points || [];
+    if (chartBench) chartBench.destroy();
+    if (points.length) {
+        chartBench = new Chart(document.getElementById("benchChart"), {
+            type: "line",
+            data: {
+                labels: points.map(p => p.date.slice(5)),
+                datasets: [
+                    { label: "我的账户", data: points.map(p => p.account), borderColor: "#2F5496",
+                      backgroundColor: "rgba(47,84,150,0.08)", fill: true, tension: 0.25, pointRadius: 0, borderWidth: 2 },
+                    { label: m.benchmark_name || "沪深300", data: points.map(p => p.benchmark), borderColor: "#FFC000",
+                      borderDash: [5, 4], tension: 0.25, pointRadius: 0, borderWidth: 2 },
+                ],
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false, animation: {duration: 0},
+                plugins: { legend: {position: "bottom", labels: {font: {size: 11}}},
+                    title: {display: true, text: "累计走势（起点=100）", font: {size: 12}} },
+                scales: { x: {ticks: {maxTicksLimit: 8, font: {size: 10}}},
+                          y: {ticks: {font: {size: 10}}} },
+            },
+        });
+    }
+
+    const items = ((d.attribution || {}).items || []).filter(x => Math.abs(x.pnl) > 1).slice(0, 12);
+    if (chartAttr) chartAttr.destroy();
+    if (items.length) {
+        chartAttr = new Chart(document.getElementById("attrChart"), {
+            type: "bar",
+            data: {
+                labels: items.map(x => x.name + (x.cleared ? "（已清仓）" : "")),
+                datasets: [{ label: "累计盈亏（元）", data: items.map(x => x.pnl),
+                    backgroundColor: items.map(x => x.pnl >= 0 ? "rgba(204,0,0,0.75)" : "rgba(0,153,0,0.75)"),
+                    borderRadius: 4 }],
+            },
+            options: {
+                indexAxis: "y", responsive: true, maintainAspectRatio: false, animation: {duration: 0},
+                plugins: { legend: {display: false},
+                    title: {display: true, text: "盈亏归因（含已实现与分红）", font: {size: 12}},
+                    tooltip: {callbacks: {
+                        label: c => (c.raw >= 0 ? "+" : "") + c.raw.toLocaleString() + " 元",
+                        afterLabel: c => {
+                            const x = items[c.dataIndex] || {};
+                            return [`浮盈亏 ${Math.round(x.unrealized || 0).toLocaleString()}`,
+                                    `已实现 ${Math.round(x.realized || 0).toLocaleString()}`,
+                                    `分红 ${Math.round(x.dividend || 0).toLocaleString()}`];
+                        },
+                    }} },
+                scales: { x: {ticks: {font: {size: 10}}}, y: {ticks: {font: {size: 10}}} },
+            },
+        });
+    }
+
+    renderRisks(d.risks || []);
+    renderOpportunity(d.opportunity || {});
+
+    const sectors = ((d.exposure || {}).sectors || []);
+    document.getElementById("sectorList").innerHTML = sectors.map(s => `
+        <div class="sector-bar"><span class="sname" title="${escapeHtml(s.sector)}">${escapeHtml(s.sector)}</span>
+        <span class="track"><span class="fill" style="width:${Math.min(s.pct_total * 2.5, 100)}%"></span></span>
+        <span class="pct">${s.pct_total.toFixed(1)}%</span></div>`).join("")
+        || '<div style="font-size:12px;color:#999;">暂无数据</div>';
+}
+
+function renderOpportunity(d) {
+    const box = document.getElementById("opportunityBox");
+    if (!box) return;
+    const items = d.items || [];
+    if (!items.length) {
+        box.innerHTML = '<div style="font-size:12px;color:#999;">暂无可比数据（需要有交易流水且能取到沪深300行情）</div>';
+        return;
+    }
+    const s = d.summary || {};
+    const color = v => v >= 0 ? "#CC0000" : "#009900";
+    const signed = v => `${v >= 0 ? "+" : ""}${Number(v).toFixed(1)}%`;
+    box.innerHTML = `
+        <div style="font-size:12.5px;color:#555;margin-bottom:10px;">
+            自 ${escapeHtml(s.since || "")} 起，你的持仓加权收益
+            <b style="color:${color(s.stock_ret)}">${signed(s.stock_ret || 0)}</b>，
+            同期${escapeHtml(s.benchmark || "沪深300")} <b style="color:${color(s.bench_ret)}">${signed(s.bench_ret || 0)}</b>，
+            ${(s.gap_pct || 0) >= 0 ? "跑赢" : "跑输"}
+            <b style="color:${color(s.gap_pct)}">${Math.abs(s.gap_pct || 0).toFixed(1)}%</b>。
+            折算成钱：<b style="color:${color(s.opportunity || 0)}">${(s.opportunity || 0) >= 0 ? "比买指数多赚" : "比买指数少赚"} ${Math.abs(Math.round(s.opportunity || 0)).toLocaleString()} 元</b>
+        </div>
+        <div class="table-wrap"><table><thead><tr>
+            <th>名称</th><th>建仓日</th><th class="num">天数</th><th class="num">我的收益</th>
+            <th class="num">沪深300</th><th class="num">超额</th><th class="num">机会成本</th>
+        </tr></thead><tbody>
+        ${items.map(x => `<tr>
+            <td style="font-weight:500;">${escapeHtml(x.name)}</td>
+            <td style="font-size:11px;color:#888;">${escapeHtml(x.start)}</td>
+            <td class="num">${x.days}</td>
+            <td class="num" style="color:${color(x.stock_ret)}">${signed(x.stock_ret)}</td>
+            <td class="num" style="color:${color(x.bench_ret)}">${signed(x.bench_ret)}</td>
+            <td class="num" style="color:${color(x.gap_pct)}">${signed(x.gap_pct)}</td>
+            <td class="num" style="color:${color(x.opportunity)}">${x.opportunity >= 0 ? "多赚 " : "少赚 "}${Math.abs(Math.round(x.opportunity)).toLocaleString()}</td>
+        </tr>`).join("")}
+        </tbody></table></div>`;
+}
+
+// ============ 决策记录 ============
+async function loadDecisions() {
+    try {
+        const res = await fetch("/api/decisions");
+        const d = await res.json();
+        state.decisions = d.decisions || [];
+        renderDecisions();
+    } catch (e) {
+        document.getElementById("decisionBody").innerHTML = "";
+    }
+}
+
+function renderDecisions() {
+    const rows = state.decisions || [];
+    const body = document.getElementById("decisionBody");
+    body.innerHTML = rows.map((r, i) => {
+        const since = r.since_pct === null || r.since_pct === undefined ? "--"
+            : `<span class="${r.since_pct >= 0 ? 'up' : 'down'}">${r.since_pct >= 0 ? '+' : ''}${r.since_pct.toFixed(1)}%</span>`;
+        const done = r.status === "已执行" || r.status === "已复盘";
+        const skipped = r.status === "不执行";
+        return `<tr>
+            <td style="font-size:12px;color:#888;">${escapeHtml(r.date.slice(0, 10))}</td>
+            <td><b>${escapeHtml(r.name)}</b></td>
+            <td>${escapeHtml(r.type)}</td>
+            <td class="num">${r.price || "--"}</td>
+            <td class="num">${r.current_price || "--"}</td>
+            <td class="num">${since}</td>
+            <td style="font-size:12px;color:#666;max-width:220px;">${escapeHtml(r.reason || "")}</td>
+            <td><span class="status-pill ${done ? 'status-done' : skipped ? 'status-skip' : ''}">${escapeHtml(r.status || "待执行")}</span></td>
+            <td style="white-space:nowrap;">
+                <button class="btn btn-sm btn-outline" onclick="setDecision(${i},'已执行')">已执行</button>
+                <button class="btn btn-sm btn-outline" onclick="setDecision(${i},'不执行')">不执行</button>
+                <button class="btn btn-sm btn-outline" onclick="reviewDecision(${i})">复盘</button>
+                <button class="btn btn-sm btn-outline" onclick="deleteDecision(${i})">删</button>
+            </td></tr>`;
+    }).join("");
+    document.getElementById("decisionsEmpty").style.display = rows.length ? "none" : "block";
+}
+
+async function postDecision(payload) {
+    const res = await fetch("/api/decisions", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload),
+    });
+    const d = await res.json();
+    if (!d.success) { alert(d.error || "操作失败"); return false; }
+    state.decisions = d.decisions || [];
+    renderDecisions();
+    return true;
+}
+
+async function addDecision() {
+    const name = document.getElementById("dName").value.trim();
+    if (!name) { alert("请填写标的"); return; }
+    const payload = {
+        action: "create",
+        type: document.getElementById("dType").value,
+        name,
+        price: document.getElementById("dPrice").value || 0,
+        target: document.getElementById("dTarget").value || 0,
+        reason: document.getElementById("dReason").value.trim(),
+    };
+    if (await postDecision(payload)) {
+        ["dName", "dPrice", "dTarget", "dReason"].forEach(id => document.getElementById(id).value = "");
+    }
+}
+
+async function logDisciplineDecision(type, name, price, reason, status) {
+    const payload = {action: "create", type, name, price, reason, status};
+    if (status === "不执行") {
+        const why = prompt(`「${name}」不执行的理由（可留空）`, "");
+        if (why === null) return;
+        payload.review = why;
+    }
+    if (await postDecision(payload)) {
+        alert(`已记录到「决策」：${name} ${type}（${status === "不执行" ? "不执行" : "待执行"}）`);
+    }
+}
+
+async function setDecision(i, status) {
+    const r = state.decisions[i];
+    if (!r) return;
+    const payload = {action: "update", row: r.row, status};
+    if (status === "不执行") {
+        const reason = prompt(`「${r.name}」不执行的理由（会记到复盘栏，可留空）`, r.review || "");
+        if (reason === null) return;
+        payload.review = reason;
+    }
+    await postDecision(payload);
+}
+
+async function reviewDecision(i) {
+    const r = state.decisions[i];
+    if (!r) return;
+    const note = prompt(`复盘「${r.name}」：这笔决策结果如何？`, r.review || "");
+    if (note === null) return;
+    await postDecision({action: "update", row: r.row, status: "已复盘", review: note});
+}
+
+async function deleteDecision(i) {
+    const r = state.decisions[i];
+    if (!r || !confirm(`删除「${r.name}」这条决策记录？`)) return;
+    await postDecision({action: "delete", row: r.row, confirm: true});
+}
+
+// ============ 交易流水 / 复盘 ============
+let tradePreview = null;
+
+function showTradeModal() {
+    const now = new Date(), pad = n => String(n).padStart(2, "0");
+    document.getElementById("trDate").value =
+        `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    document.getElementById("trDirection").value = "买入";
+    document.getElementById("trName").value = "";
+    document.getElementById("trCode").value = "";
+    document.getElementById("trQty").value = "";
+    document.getElementById("trPrice").value = "";
+    document.getElementById("trFeeAuto").checked = true;
+    document.getElementById("trFee").disabled = true;
+    document.getElementById("trFee").value = "0";
+    document.getElementById("trFeeHint").textContent = "填数量和成交价后自动算";
+    document.getElementById("trAccount").value = "A股主账户";
+    document.getElementById("trNote").value = "";
+    document.getElementById("trSync").checked = true;
+    document.getElementById("trError").style.display = "none";
+    invalidateTradePreview();
+    document.getElementById("tradeModal").classList.add("show");
+    setTimeout(() => document.getElementById("trName").focus(), 100);
+}
+
+function hideTradeModal() {
+    document.getElementById("tradeModal").classList.remove("show");
+    tradePreview = null;
+}
+
+function onTradeNameChange() {
+    const name = document.getElementById("trName").value.trim();
+    const stocks = (state.data && state.data.stocks) || [];
+    const s = stocks.find(x => x.name === name);
+    if (s) {
+        document.getElementById("trCode").value = s.code || "";
+        if (s.account) document.getElementById("trAccount").value = s.account;
+    }
+    updateFeeEstimate();
+    invalidateTradePreview();
+}
+
+function onTradeDirectionChange() { updateFeeEstimate(); invalidateTradePreview(); }
+
+function onTradeInput() { updateFeeEstimate(); invalidateTradePreview(); }
+
+function feeAutoOn() { return document.getElementById("trFeeAuto").checked; }
+
+function onFeeAutoChange() {
+    const auto = feeAutoOn();
+    document.getElementById("trFee").disabled = auto;
+    if (auto) updateFeeEstimate();
+    else document.getElementById("trFeeHint").textContent = "手动填写，请按券商实际扣费";
+    invalidateTradePreview();
+}
+
+function isFundName(name, code) {
+    const n = (name || "").toUpperCase();
+    const c = String(code || "");
+    return n.includes("ETF") || n.includes("LOF") || ["15", "16", "50", "51", "56", "58"].includes(c.slice(0, 2));
+}
+
+function updateFeeEstimate() {
+    if (!feeAutoOn()) return;
+    const hint = document.getElementById("trFeeHint");
+    const feeEl = document.getElementById("trFee");
+    const qty = parseFloat(document.getElementById("trQty").value || 0);
+    const price = parseFloat(document.getElementById("trPrice").value || 0);
+    const dir = document.getElementById("trDirection").value;
+    const name = document.getElementById("trName").value.trim();
+    const code = document.getElementById("trCode").value.trim();
+    if (name.includes("黄金")) {
+        feeEl.value = "0";
+        hint.textContent = "黄金交易请关掉「自动算」后手动填写费用";
+        return;
+    }
+    if (!(qty > 0 && price > 0)) {
+        feeEl.value = "0";
+        hint.textContent = "填数量和成交价后自动算";
+        return;
+    }
+    const amount = qty * price;
+    const fund = isFundName(name, code);
+    const commission = Math.max(amount * 0.00025, 5);
+    const stamp = dir === "卖出" && !fund ? amount * 0.0005 : 0;
+    const transfer = fund ? 0 : amount * 0.00001;
+    const total = commission + stamp + transfer;
+    feeEl.value = total.toFixed(2);
+    hint.textContent = `佣金 ${commission.toFixed(2)}`
+        + (transfer ? ` + 过户费 ${transfer.toFixed(2)}` : "")
+        + (stamp ? ` + 印花税 ${stamp.toFixed(2)}` : (fund ? "（ETF 免印花税、免过户费）" : "（买入不收印花税）"))
+        + ` = ${total.toFixed(2)} 元`;
+}
+
+function invalidateTradePreview() {
+    tradePreview = null;
+    const box = document.getElementById("trPreview");
+    box.style.display = "none";
+    box.innerHTML = "";
+    document.getElementById("trConfirmBtn").disabled = true;
+}
+
+function tradeFormData() {
+    const raw = document.getElementById("trDate").value;
+    return {
+        date: raw ? raw.replace("T", " ") : "",
+        direction: document.getElementById("trDirection").value,
+        name: document.getElementById("trName").value.trim(),
+        code: document.getElementById("trCode").value.trim(),
+        qty: parseFloat(document.getElementById("trQty").value || 0),
+        price: parseFloat(document.getElementById("trPrice").value || 0),
+        fee: feeAutoOn() ? null : parseFloat(document.getElementById("trFee").value || 0),
+        account: document.getElementById("trAccount").value,
+        note: document.getElementById("trNote").value.trim(),
+        sync: document.getElementById("trSync").checked,
+    };
+}
+
+function showTradeError(msg) {
+    const el = document.getElementById("trError");
+    el.textContent = msg;
+    el.style.display = "block";
+}
+
+function renderTradePreview(p, data) {
+    const box = document.getElementById("trPreview");
+    const money = v => Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+    const rows = [];
+    rows.push(`<div><b>${p.direction} ${escapeHtml(p.name)}</b> ${money(p.qty)} 股 @ ${Number(p.price).toFixed(3)}，成交额 ${money(p.amount)}</div>`);
+    const fb = p.fee_breakdown;
+    if (fb && p.fee) {
+        const parts = [`佣金 ${money(fb.commission)}`];
+        if (fb.transfer) parts.push(`过户费 ${money(fb.transfer)}`);
+        if (fb.stamp) parts.push(`印花税 ${money(fb.stamp)}`);
+        else if (!fb.transfer) parts.push("ETF 免印花税和过户费");
+        rows.push(`<div>费用 ${money(p.fee)} 元（${parts.join(" + ")}）</div>`);
+    } else if (p.fee) {
+        rows.push(`<div>费用 ${money(p.fee)} 元（手动填写）</div>`);
+    }
+    if (p.direction === "卖出") {
+        rows.push(`<div>本笔实现盈亏（真实成本 ${Number(p.ledger_cost_before).toFixed(3)}）：<b style="color:${p.realized >= 0 ? "#CC0000" : "#009900"}">${p.realized >= 0 ? "+" : ""}${money(p.realized)}</b></div>`);
+    }
+    if (data.sync && p.can_sync) {
+        rows.push(`<div>持仓：${money(p.qty_before)} → ${money(p.qty_after)} 股；摊薄成本 ${Number(p.cost_before).toFixed(3)} → ${Number(p.cost_after).toFixed(3)}</div>`);
+        rows.push(`<div>现金（${escapeHtml(p.account)}）：${money(p.cash_before)} → ${money(p.cash_after)}</div>`);
+    } else {
+        rows.push("<div>只记录流水，不改持仓和现金</div>");
+    }
+    (p.warnings || []).forEach(w => rows.push(`<div class="warn">⚠️ ${escapeHtml(w)}</div>`));
+    box.innerHTML = rows.join("");
+    box.style.display = "block";
+}
+
+async function previewTrade() {
+    document.getElementById("trError").style.display = "none";
+    const data = tradeFormData();
+    try {
+        const res = await fetch("/api/transactions", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...data, action: "preview" }),
+        });
+        const r = await res.json();
+        if (!r.success || !r.preview) { showTradeError(r.error || "预览失败"); return; }
+        tradePreview = data;
+        renderTradePreview(r.preview, data);
+        document.getElementById("trConfirmBtn").disabled = false;
+    } catch (e) {
+        showTradeError("预览失败：" + e.message);
+    }
+}
+
+async function confirmTrade() {
+    if (!tradePreview) { await previewTrade(); if (!tradePreview) return; }
+    const data = tradeFormData();
+    if (data.sync && !editHoldingsUnlocked) {
+        pwdPendingAction = confirmTrade;
+        document.getElementById("pwdModal").classList.add("show");
+        document.getElementById("pwdInput").value = "";
+        document.getElementById("pwdError").style.display = "none";
+        setTimeout(() => document.getElementById("pwdInput").focus(), 100);
+        return;
+    }
+    const btn = document.getElementById("trConfirmBtn");
+    btn.disabled = true; btn.textContent = "保存中…";
+    try {
+        const res = await fetch("/api/transactions", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...data, action: "create" }),
+        });
+        const r = await res.json();
+        if (!r.success) { showTradeError(r.error || "保存失败"); return; }
+        hideTradeModal();
+        loadData();
+        if (state.insights) loadToday();
+        alert(`已记录：${data.direction} ${data.name} ${data.qty} 股` + (r.synced ? "，持仓和现金已更新" : "（仅记流水）"));
+    } catch (e) {
+        showTradeError("保存失败：" + e.message);
+    } finally {
+        btn.textContent = "确认保存";
+        btn.disabled = false;
+    }
+}
+
+async function undoLastTransaction() {
+    if (!confirm("撤销最后一笔交易？持仓和现金会恢复到交易前。")) return;
+    try {
+        const res = await fetch("/api/transactions", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "undo", confirm: true }),
+        });
+        const d = await res.json();
+        if (!d.success) { alert(d.error || "撤销失败"); return; }
+        loadData(); loadTransactions();
+        if (state.insights) loadToday();
+        alert(`已撤销：${d.direction} ${d.name} ${d.qty} 股`);
+    } catch (e) {
+        alert("撤销失败：" + e.message);
+    }
+}
+
+async function loadTransactions() {
+    const metrics = document.getElementById("txnMetrics");
+    if (metrics) metrics.innerHTML = '<div style="font-size:12px;color:#999;">加载中…</div>';
+    try {
+        const r = await fetch("/api/transactions");
+        renderTransactions(await r.json());
+    } catch (e) {
+        if (metrics) metrics.innerHTML = '<div style="font-size:12px;color:#CC0000;">加载失败</div>';
+    }
+}
+
+function renderTransactions(d) {
+    const s = d.summary || {};
+    const money = v => Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+    const pnlColor = v => v >= 0 ? "#CC0000" : "#009900";
+    const tiles = [
+        { label: "已记录", value: `${s.trade_count || 0} 笔`, sub: `已平仓 ${s.sell_count || 0} 笔`, color: "#2F5496" },
+        { label: "胜率", value: s.win_rate === null || s.win_rate === undefined ? "--" : `${s.win_rate}%`, sub: "只统计卖出", color: "#2F5496" },
+        { label: "实现盈亏", value: s.realized === undefined ? "--" : `${s.realized >= 0 ? "+" : ""}${money(s.realized)}`, sub: "按真实成本", color: pnlColor(s.realized || 0) },
+        { label: "盈亏比", value: s.profit_factor === null || s.profit_factor === undefined ? "--" : s.profit_factor, sub: `均赚 ${s.avg_win ?? "--"} / 均亏 ${s.avg_loss ?? "--"}`, color: "#2F5496" },
+    ];
+    document.getElementById("txnMetrics").innerHTML = tiles.map(t =>
+        `<div class="metric-tile"><div class="label">${t.label}</div><div class="value" style="color:${t.color}">${t.value}</div><div class="sub">${escapeHtml(String(t.sub))}</div></div>`).join("");
+
+    const by = d.by_stock || [];
+    document.getElementById("txnByStockEmpty").style.display = by.length ? "none" : "block";
+    document.getElementById("txnByStockBody").innerHTML = by.map(x => `<tr>
+        <td style="font-weight:500;">${escapeHtml(x.name)}</td>
+        <td class="num">${money(x.buy_amount)}</td>
+        <td class="num">${money(x.sell_amount)}</td>
+        <td class="num" style="font-weight:600;color:${pnlColor(x.realized)}">${x.realized >= 0 ? "+" : ""}${money(x.realized)}</td>
+        <td class="num">${x.buy_count + x.sell_count}</td>
+    </tr>`).join("");
+
+    const rows = d.transactions || [];
+    document.getElementById("txnEmpty").style.display = rows.length ? "none" : "block";
+    document.getElementById("txnBody").innerHTML = rows.map(t => {
+        const pnl = t.realized;
+        const pnlHtml = pnl === null || pnl === undefined ? "-" :
+            `<span style="color:${pnlColor(pnl)};font-weight:600;">${pnl >= 0 ? "+" : ""}${money(pnl)}</span>`;
+        return `<tr>
+            <td style="font-size:11px;color:#888;">${escapeHtml((t.date || "").slice(0, 16))}</td>
+            <td>${escapeHtml(t.name)}</td>
+            <td>${escapeHtml(t.direction)}</td>
+            <td class="num">${money(t.qty)}</td>
+            <td class="num">${Number(t.price).toFixed(3)}</td>
+            <td class="num">${pnlHtml}</td>
+        </tr>`;
+    }).join("");
+}
+
+// ============ 对账单导入 ============
+function showStatementImport() {
+    document.getElementById("stmtError").style.display = "none";
+    document.getElementById("stmtResult").innerHTML = "";
+    document.getElementById("stmtFile").value = "";
+    document.getElementById("stmtPassword").value = "";
+    document.getElementById("statementModal").classList.add("show");
+}
+
+function hideStatementImport() {
+    document.getElementById("statementModal").classList.remove("show");
+}
+
+function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(",", 2)[1] || "");
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+}
+
+function renderStatementResult(d) {
+    const meta = d.meta || {};
+    const lines = [];
+    if (meta.query_range) lines.push(`查询区间：${escapeHtml(meta.query_range)}`);
+    if (meta.customer) lines.push(`客户：${escapeHtml(meta.customer)}`);
+    if (meta.total_assets) lines.push(`对账单总资产：${Number(meta.total_assets).toLocaleString()} 元`);
+    if (d.ledger) lines.push(`将写入 <b>${d.ledger.length}</b> 条交易流水（预览，尚未保存）`);
+    if (d.ledger_rows !== undefined) lines.push(`已写入 <b>${d.ledger_rows}</b> 条交易流水`);
+    if (d.corporate_actions !== undefined) lines.push(`已写入 <b>${d.corporate_actions}</b> 条分红/税务记录`);
+    if (d.cash !== undefined) lines.push(`账户一现金：<b>${Number(d.cash).toLocaleString()}</b> 元；股票市值：<b>${Number(d.stock_value).toLocaleString()}</b> 元`);
+    const warnings = d.warnings || [];
+    if (warnings.length) {
+        lines.push(`<span style="color:#A67C00;">⚠️ ${warnings.length} 条提示：</span>` +
+            warnings.slice(0, 5).map(w => `<div style="color:#A67C00;">· ${escapeHtml(w)}</div>`).join(""));
+    }
+    document.getElementById("stmtResult").innerHTML = lines.join("<br>") || "解析完成，没有可导入的记录。";
+}
+
+async function importStatement(dryRun) {
+    const errEl = document.getElementById("stmtError");
+    errEl.style.display = "none";
+    const file = document.getElementById("stmtFile").files[0];
+    const password = document.getElementById("stmtPassword").value.trim();
+    if (!file) { errEl.textContent = "请选择对账单 PDF"; errEl.style.display = "block"; return; }
+    if (!password) { errEl.textContent = "请填写 PDF 密码"; errEl.style.display = "block"; return; }
+    const previewBtn = document.getElementById("stmtPreviewBtn");
+    const importBtn = document.getElementById("stmtImportBtn");
+    previewBtn.disabled = importBtn.disabled = true;
+    document.getElementById("stmtResult").innerHTML = '<span class="spinner"></span> 正在解析 PDF…';
+    try {
+        const content_b64 = await fileToBase64(file);
+        const res = await fetch("/api/import-statement", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content_b64, password, dry_run: !!dryRun }),
+        });
+        const d = await res.json();
+        if (!d.success) throw new Error(d.error || "导入失败");
+        renderStatementResult(d);
+        if (!dryRun) {
+            loadData(); loadTransactions(); loadCorporateActions(); loadToday(); loadInsights();
+            setTimeout(() => { hideStatementImport(); alert(`导入完成：${d.ledger_rows} 条流水，${d.corporate_actions} 条分红记录`); }, 600);
+        }
+    } catch (e) {
+        document.getElementById("stmtResult").innerHTML = "";
+        errEl.textContent = e.message || String(e);
+        errEl.style.display = "block";
+    } finally {
+        previewBtn.disabled = importBtn.disabled = false;
+    }
+}
+
+// ============ 公司行为（分红 / 红利税 / 利息）============
+async function loadCorporateActions() {
+    try {
+        const res = await fetch("/api/corporate-actions");
+        renderCorporateActions(await res.json());
+    } catch (e) {
+        const body = document.getElementById("caBody");
+        if (body) body.innerHTML = "";
+    }
+}
+
+function renderCorporateActions(d) {
+    const rows = d.actions || [];
+    const total = Number(d.total || 0);
+    const totalEl = document.getElementById("caTotal");
+    if (totalEl) {
+        totalEl.innerHTML = `净额 <b style="color:${total >= 0 ? '#CC0000' : '#009900'}">${total >= 0 ? '+' : ''}${total.toLocaleString()}</b> 元`;
+    }
+    const body = document.getElementById("caBody");
+    body.innerHTML = rows.map((a, i) => `<tr>
+        <td style="font-size:11px;color:#888;">${escapeHtml(a.date)}</td>
+        <td>${escapeHtml(a.name || "—")}</td>
+        <td>${escapeHtml(a.type)}</td>
+        <td class="num" style="color:${a.amount >= 0 ? '#CC0000' : '#009900'}">${a.amount >= 0 ? '+' : ''}${Number(a.amount).toLocaleString()}</td>
+        <td style="font-size:11px;color:#999;">${escapeHtml(a.source || "")}</td>
+        <td><button class="btn btn-sm btn-outline" onclick="deleteCorporateAction(${i})">删</button></td>
+    </tr>`).join("");
+    document.getElementById("caEmpty").style.display = rows.length ? "none" : "block";
+    state.corporateActions = rows;
+}
+
+async function addCorporateAction() {
+    const type = document.getElementById("caType").value;
+    let amount = parseFloat(document.getElementById("caAmount").value);
+    if (!amount || isNaN(amount)) { alert("请填写金额"); return; }
+    if (type === "红利税" && amount > 0) amount = -amount;
+    const name = document.getElementById("caName").value.trim();
+    if (!name && type !== "利息") { alert("请填写名称"); return; }
+    const payload = {
+        action: "create",
+        date: document.getElementById("caDate").value || undefined,
+        type, amount,
+        name: name || "利息/调账",
+        note: document.getElementById("caNote").value.trim(),
+    };
+    const res = await fetch("/api/corporate-actions", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+    const d = await res.json();
+    if (!d.success) { alert(d.error || "记录失败"); return; }
+    ["caName", "caAmount", "caNote"].forEach(id => document.getElementById(id).value = "");
+    renderCorporateActions(d);
+    loadData();
+}
+
+async function deleteCorporateAction(i) {
+    const a = (state.corporateActions || [])[i];
+    if (!a || !confirm(`删除 ${a.date} ${a.name || ""} ${a.type} ${a.amount} 元？`)) return;
+    const res = await fetch("/api/corporate-actions", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete", row: a.row, confirm: true }),
+    });
+    const d = await res.json();
+    if (!d.success) { alert(d.error || "删除失败"); return; }
+    renderCorporateActions(d);
+    loadData();
+}
+
+// ============ 持仓日历 ============
+async function loadCalendar(force) {
+    const updated = document.getElementById("calendarUpdated");
+    if (updated) updated.textContent = force ? "正在刷新公司事件…" : "正在读取…";
+    try {
+        const res = await fetch("/api/calendar" + (force ? "?force=1" : ""));
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        renderCalendar(d);
+    } catch (e) {
+        if (updated) updated.textContent = "公司事件加载失败：" + e.message;
+    }
+}
+
+function renderCalendar(d) {
+    const events = d.events || [];
+    state.calendar = events;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const typeClass = t => t === "解禁" ? "unlock" : (t === "除权除息" ? "dividend" : (t === "股东大会" ? "manual" : ""));
+    document.getElementById("calendarBody").innerHTML = events.map((e, i) => {
+        const dt = new Date(e.date + "T00:00:00");
+        const days = Math.round((dt - today) / 86400000);
+        const left = isNaN(days) ? "-" : (days < 0 ? `已过 ${-days} 天` : (days === 0 ? "今天" : `${days} 天`));
+        return `<tr>
+            <td class="event-date">${escapeHtml(e.date)}</td>
+            <td class="event-days">${left}</td>
+            <td>${escapeHtml(e.name || e.code || "—")}</td>
+            <td><span class="event-tag ${typeClass(e.type)}">${escapeHtml(e.type || "事件")}</span></td>
+            <td style="font-size:12px;">${escapeHtml(e.detail || "")}</td>
+            <td style="font-size:11px;color:#999;">${escapeHtml(e.source || "")}</td>
+            <td>${e.source === "手工" ? `<button class="btn btn-sm btn-outline" onclick="deleteManualEvent(${i})">删</button>` : ""}</td>
+        </tr>`;
+    }).join("");
+    document.getElementById("calendarEmpty").style.display = events.length ? "none" : "block";
+    document.getElementById("calendarUpdated").textContent =
+        `更新于 ${d.fetched_at || "—"} · 覆盖 ${d.stocks || 0} 只持仓`;
+}
+
+async function addManualEvent() {
+    const date = document.getElementById("calDate").value;
+    if (!date) { alert("请选择日期"); return; }
+    const payload = {
+        action: "create", date,
+        code: document.getElementById("calCode").value.trim(),
+        name: document.getElementById("calName").value.trim(),
+        type: document.getElementById("calType").value,
+        detail: document.getElementById("calNote").value.trim(),
+    };
+    const d = await fetch("/api/calendar", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)}).then(r=>r.json());
+    if (!d.success) { alert(d.error || "添加失败"); return; }
+    ["calDate","calCode","calName","calNote"].forEach(id => document.getElementById(id).value = "");
+    renderCalendar(d);
+}
+
+async function deleteManualEvent(i) {
+    const e = (state.calendar || [])[i];
+    if (!e || !e.row || !confirm(`删除 ${e.date} ${e.name || ""} ${e.type}？`)) return;
+    const d = await fetch("/api/calendar", {method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({action:"delete", row:e.row, confirm:true})}).then(r=>r.json());
+    if (!d.success) { alert(d.error || "删除失败"); return; }
+    renderCalendar(d);
+}
+
+// ============ 公告监控 ============
+async function loadAnnouncements(force) {
+    const body = document.getElementById("annBody");
+    if (!body) return;
+    if (!state.announcements || force) body.innerHTML = '<span class="spinner"></span> 正在读取持仓公告…';
+    try {
+        const res = await fetch("/api/announcements" + (force ? "?force=1" : ""));
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        state.announcements = d;
+        renderAnnouncements(d);
+    } catch (e) {
+        body.textContent = "公告加载失败：" + e.message;
+    }
+}
+
+function renderAnnouncements(d) {
+    const items = (d.items || []).slice().sort((a, b) => (b.risk.length ? 1 : 0) - (a.risk.length ? 1 : 0) || b.date.localeCompare(a.date));
+    const badge = document.getElementById("annBadge");
+    if (badge) badge.textContent = `风险 ${d.risk_count || 0} 条 / 共 ${items.length} 条`;
+    const body = document.getElementById("annBody");
+    if (!items.length) { body.innerHTML = '<div style="font-size:12px;color:#999;">近 30 天没有公告</div>'; return; }
+    body.innerHTML = items.map(a => `<div class="ann-item" style="${a.risk.length ? 'background:#fffafa;border-left:3px solid #CC0000;padding-left:10px;' : ''}">
+        <span class="ann-date">${escapeHtml(a.date)}</span><span class="ann-name">${escapeHtml(a.name)}</span>
+        <a href="${escapeHtml(a.url)}" target="_blank" rel="noopener">${escapeHtml(a.title)}</a>
+        ${a.risk.map(t => `<span class="risk-tag">${escapeHtml(t)}</span>`).join("")}
+    </div>`).join("");
+}
+
+// ============ 卖出资金去向 ============
+const SELL_PURPOSES = ["暂存现金", "再买入", "转出", "还贷", "其他"];
+const SELL_STATUS = ["待执行", "已执行", "已取消"];
+
+async function loadSellPlans() {
+    try {
+        const d = await fetch("/api/sell-plans").then(r => r.json());
+        if (d.error) throw new Error(d.error);
+        renderSellPlans(d);
+    } catch (e) {
+        const body = document.getElementById("spBody");
+        if (body) body.innerHTML = "";
+    }
+}
+
+function renderSellPlans(d) {
+    state.sellPlans = d.plans || [];
+    state.unplannedSells = d.unplanned || [];
+    const summary = document.getElementById("spSummary");
+    if (summary) summary.innerHTML =
+        `<span>现金可用 <b>${Number(d.cash || 0).toLocaleString()}</b> 元</span>` +
+        `<span>计划再买入 <b>${Number(d.planned_rebuy || 0).toLocaleString()}</b> 元</span>` +
+        `<span>未规划卖出 <b>${(d.unplanned || []).length}</b> 笔</span>`;
+    const rows = d.plans || [];
+    document.getElementById("spBody").innerHTML = rows.map((p, i) => `<tr>
+        <td style="font-size:11px;color:#888;">${escapeHtml(p.date)}</td>
+        <td>${escapeHtml(p.name || p.code || "—")}</td>
+        <td class="num">${Number(p.amount || 0).toLocaleString()}</td>
+        <td><select id="spPurpose-${i}" style="padding:4px 6px;border:1px solid #ddd;border-radius:6px;font-size:12px;">
+            ${SELL_PURPOSES.map(x => `<option ${x === p.purpose ? "selected" : ""}>${x}</option>`).join("")}
+        </select></td>
+        <td style="min-width:190px;">
+            <input id="spTarget-${i}" list="stockOptions" value="${escapeHtml(p.target || "")}" placeholder="目标" style="width:100px;padding:4px 6px;border:1px solid #ddd;border-radius:6px;font-size:12px;">
+            <input type="date" id="spPlanDate-${i}" value="${escapeHtml(p.plan_date || "")}" style="padding:4px 6px;border:1px solid #ddd;border-radius:6px;font-size:12px;">
+        </td>
+        <td><select id="spStatus-${i}" style="padding:4px 6px;border:1px solid #ddd;border-radius:6px;font-size:12px;">
+            ${SELL_STATUS.map(x => `<option ${x === p.status ? "selected" : ""}>${x}</option>`).join("")}
+        </select></td>
+        <td style="white-space:nowrap;">
+            <button class="btn btn-sm btn-outline" onclick="saveSellPlan(${i})">存</button>
+            <button class="btn btn-sm btn-outline" onclick="deleteSellPlan(${i})">删</button>
+        </td>
+    </tr>`).join("");
+    document.getElementById("spEmpty").style.display = rows.length ? "none" : "block";
+
+    const un = d.unplanned || [];
+    const box = document.getElementById("spUnplanned");
+    if (!un.length) { box.innerHTML = ""; return; }
+    box.innerHTML = `<div style="font-size:12.5px;color:#888;margin-bottom:6px;">近 60 天卖出但还没规划去向：</div>` +
+        un.map((s, i) => `<div class="alert-item" style="align-items:center;">
+            <span>${escapeHtml(s.date)} ${escapeHtml(s.name)} <b>${Number(s.amount || 0).toLocaleString()}</b> 元</span>
+            <button class="btn btn-sm btn-outline" onclick="fillSellPlan(${i})">填计划</button>
+        </div>`).join("");
+}
+
+function fillSellPlan(i) {
+    const s = (state.unplannedSells || [])[i];
+    if (!s) return;
+    document.getElementById("spDate").value = s.date || "";
+    document.getElementById("spCode").value = s.code || "";
+    document.getElementById("spName").value = s.name || "";
+    document.getElementById("spAmount").value = s.amount || "";
+    document.getElementById("spPurpose").focus();
+}
+
+async function addSellPlan() {
+    const name = document.getElementById("spName").value.trim();
+    const amount = parseFloat(document.getElementById("spAmount").value);
+    if (!name) { alert("请填写卖出标的"); return; }
+    if (!amount || isNaN(amount)) { alert("请填写卖出金额"); return; }
+    const payload = {
+        action: "create", date: document.getElementById("spDate").value || undefined,
+        code: document.getElementById("spCode").value.trim(), name, amount,
+        purpose: document.getElementById("spPurpose").value,
+        target: document.getElementById("spTarget").value.trim(),
+        plan_date: document.getElementById("spPlanDate").value || undefined,
+        note: document.getElementById("spNote").value.trim(),
+    };
+    const d = await fetch("/api/sell-plans", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)}).then(r=>r.json());
+    if (!d.success) { alert(d.error || "保存失败"); return; }
+    ["spDate","spCode","spName","spAmount","spTarget","spPlanDate","spNote"].forEach(id => document.getElementById(id).value = "");
+    renderSellPlans(d);
+}
+
+async function saveSellPlan(i) {
+    const p = (state.sellPlans || [])[i];
+    if (!p) return;
+    const payload = {
+        action: "update", row: p.row,
+        purpose: document.getElementById(`spPurpose-${i}`).value,
+        target: document.getElementById(`spTarget-${i}`).value.trim(),
+        plan_date: document.getElementById(`spPlanDate-${i}`).value,
+        status: document.getElementById(`spStatus-${i}`).value,
+    };
+    const d = await fetch("/api/sell-plans", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)}).then(r=>r.json());
+    if (!d.success) { alert(d.error || "保存失败"); return; }
+    renderSellPlans(d);
+}
+
+async function deleteSellPlan(i) {
+    const p = (state.sellPlans || [])[i];
+    if (!p || !confirm(`删除 ${p.date} ${p.name} 的卖出计划？`)) return;
+    const d = await fetch("/api/sell-plans", {method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({action:"delete", row:p.row, confirm:true})}).then(r=>r.json());
+    if (!d.success) { alert(d.error || "删除失败"); return; }
+    renderSellPlans(d);
+}
+
+// ============ 不动日 ============
+let quietSeq = 0;
+async function loadQuietDays() {
+    const seq = ++quietSeq;
+    try {
+        const d = await fetch("/api/quiet-days").then(r => r.json());
+        if (seq !== quietSeq) return;  // 已被增删操作覆盖，丢弃过期响应
+        if (d.error) throw new Error(d.error);
+        state.quiet = d;
+        renderQuiet(d);
+    } catch (e) {}
+}
+
+function renderQuiet(d) {
+    const banner = document.getElementById("quietBanner");
+    const btn = document.getElementById("quietBtn");
+    if (!banner) return;
+    if (d.active) {
+        const row = (d.days || []).find(x => x.date === d.today) || {};
+        banner.style.display = "flex";
+        banner.innerHTML = `<span>🌿 今天已设为不动日</span>` +
+            `<span class="reason">${escapeHtml(row.reason || "今天不动")}</span>` +
+            `<span style="font-size:11px;color:#7a9a82;">近 30 天已记 ${d.last30 || 0} 天不动</span>` +
+            `<button class="btn btn-sm btn-outline" onclick="toggleQuietDay()">取消</button>`;
+        if (btn) btn.textContent = "🌿 取消不动日";
+    } else {
+        banner.style.display = "none";
+        banner.innerHTML = "";
+        if (btn) btn.textContent = "🌿 今天不动";
+    }
+}
+
+async function toggleQuietDay() {
+    quietSeq++;  // 作废还没回来的加载请求
+    const d = state.quiet || {};
+    if (d.active) {
+        const row = (d.days || []).find(x => x.date === d.today);
+        if (!row || !confirm("取消今天的不动日？")) return;
+        const res = await fetch("/api/quiet-days", {method:"POST", headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({action:"delete", row:row.row, confirm:true})}).then(r=>r.json());
+        if (!res.success) { alert(res.error || "取消失败"); return; }
+        state.quiet = res; renderQuiet(res);
+        return;
+    }
+    const reason = prompt("今天不动的理由（例如：等回踩、外出、心态不稳）", "等回踩");
+    if (reason === null) return;
+    const res = await fetch("/api/quiet-days", {method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({action:"create", date:d.today, reason})}).then(r=>r.json());
+    if (!res.success) { alert(res.error || "记录失败"); return; }
+    state.quiet = res; renderQuiet(res);
+}
+
+// ============ 初始化 ============
+// 先用已保存的数据渲染，行情只在点「刷新」时拉取
+loadData();
+loadToday();
+loadMarketView();
+loadQuietDays();
+
+// 加载聊天历史（没有历史则显示默认问候）
+if (!loadChatHistory()) {
+    document.getElementById("chatMessages").innerHTML = `<div class="msg assistant">
+        👋 你好！我是你的投资 Agent。我可以：
+        <br>• 分析你的持仓和风险
+        <br>• 给仓位管理建议
+        <br>• 联网搜索最新市场信息
+        <br>• 回答理财问题
+        <br><br>试试问我："帮我分析持仓风险" 或 "查一下今天A股行情"
+    </div>`;
+}
+
+// 加载配置 badge
+fetch("/api/config").then(r=>r.json()).then(cfg => {
+    document.getElementById("modelBadge").textContent = cfg.model || "未配置";
+}).catch(()=>{});
+

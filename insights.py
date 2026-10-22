@@ -5,13 +5,12 @@ import math
 import threading
 import urllib.request
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 import openpyxl
 
 import portfolio_agent as agent
-
-BEIJING_TZ = timezone(timedelta(hours=8))
+from settings import BEIJING_TZ
 BENCHMARK_CODE = "sh000300"
 BENCHMARK_NAME = "沪深300"
 

@@ -12,3 +12,4 @@ backups/
 portfolio_backup_*.xlsx
 *_backup_*.py
 *_backup_*.html
+logs/
