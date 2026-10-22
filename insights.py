@@ -1225,7 +1225,7 @@ def add_decision(data):
             data.get("status") or "待执行",
             data.get("review", ""),
         ])
-        wb.save(agent.EXCEL_PATH)
+        agent.save_workbook(wb)
         wb.close()
         return True
     except Exception as e:
@@ -1241,7 +1241,7 @@ def update_decision(row, status=None, review=None):
             ws.cell(row=row, column=7, value=status)
         if review is not None:
             ws.cell(row=row, column=8, value=review)
-        wb.save(agent.EXCEL_PATH)
+        agent.save_workbook(wb)
         wb.close()
         return True
     except Exception as e:
@@ -1254,7 +1254,7 @@ def delete_decision(row):
         wb = openpyxl.load_workbook(agent.EXCEL_PATH)
         ws = _decision_sheet(wb)
         ws.delete_rows(row)
-        wb.save(agent.EXCEL_PATH)
+        agent.save_workbook(wb)
         wb.close()
         return True
     except Exception as e:

@@ -3,6 +3,7 @@
 
 PDF 文本提取会丢失列间距，这里按字符坐标还原表格。
 """
+import os
 import re
 import json
 from datetime import datetime
@@ -243,6 +244,17 @@ LEDGER_HEADERS = ["日期", "方向", "资产类别", "资产名称", "代码", 
                   "成本价(复盘)", "结存数量", "结存成本"]
 
 
+def _atomic_save(wb, path):
+    """先写临时文件再替换，避免导入时网页读到半个 Excel"""
+    tmp = str(path) + ".tmp"
+    try:
+        wb.save(tmp)
+        os.replace(tmp, str(path))
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
 def _upsert_transactions(ws, rows):
     # 旧版占位行是 A2:J2 合并单元格，不清掉会把首条流水写坏
     for rng in list(ws.merged_cells.ranges):
@@ -362,7 +374,7 @@ def import_statement(pdf_path, password, excel_path="portfolio.xlsx", dry_run=Fa
     _upsert_transactions(ws, ledger)
     actions = _write_corporate_actions(wb, data)
     cash_total, stock_total = _update_holdings(wb, data)
-    wb.save(excel_path)
+    _atomic_save(wb, excel_path)
     wb.close()
     return {
         "meta": data["meta"],

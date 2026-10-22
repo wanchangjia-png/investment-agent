@@ -9,3 +9,6 @@ create_portfolio.py
 .last_refresh
 prev_close.json
 backups/
+portfolio_backup_*.xlsx
+*_backup_*.py
+*_backup_*.html

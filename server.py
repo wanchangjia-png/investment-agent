@@ -14,7 +14,7 @@ import threading
 import urllib.request
 import urllib.parse
 from datetime import datetime
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
 # 确保能找到同目录模块
@@ -1667,7 +1667,11 @@ class PortfolioHandler(BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length) if content_length > 0 else b"{}"
-        data = json.loads(body) if body else {}
+        try:
+            data = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            self._send_json({"success": False, "error": "请求体不是合法 JSON"}, 400)
+            return
 
         # 写操作前自动留快照；删除/撤销强制备份（不受 5 分钟节流影响）
         _WRITE_PATHS = {
@@ -1675,13 +1679,20 @@ class PortfolioHandler(BaseHTTPRequestHandler):
             "/api/transactions", "/api/decisions", "/api/save-config", "/api/refresh",
             "/api/corporate-actions", "/api/import-statement",
         }
-        if path in _WRITE_PATHS:
-            is_write = not (path == "/api/transactions" and data.get("action") == "preview")
-            destructive = (data.get("action") in ("delete", "undo")
-                           or path in ("/api/holdings-save", "/api/import-statement"))
-            if is_write:
-                agent.auto_backup(path.strip("/").replace("/", "_"), force=destructive)
+        is_write = (path in _WRITE_PATHS
+                    and not (path == "/api/transactions" and data.get("action") == "preview"))
+        destructive = (data.get("action") in ("delete", "undo")
+                       or path in ("/api/holdings-save", "/api/import-statement"))
 
+        # 多线程下写 Excel 串行化：读-改-写期间不让第二个请求插进来
+        if is_write:
+            with agent.EXCEL_LOCK:
+                agent.auto_backup(path.strip("/").replace("/", "_"), force=destructive)
+                self._dispatch_post(path, data)
+        else:
+            self._dispatch_post(path, data)
+
+    def _dispatch_post(self, path, data):
         if path == "/api/chat":
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -1997,8 +2008,12 @@ class PortfolioHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    HTTPServer.allow_reuse_address = True
-    server = HTTPServer((HOST, PORT), PortfolioHandler)
+    ThreadingHTTPServer.allow_reuse_address = True
+    ThreadingHTTPServer.daemon_threads = True
+    removed = agent.cleanup_old_files()
+    if removed:
+        print(f"🧹 已清理 {removed} 个过期日志/备份")
+    server = ThreadingHTTPServer((HOST, PORT), PortfolioHandler)
     print(f"\n{'='*50}")
     print(f"  📊 投资追踪 Agent 已启动！")
     print(f"  {'='*50}")

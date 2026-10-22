@@ -15,6 +15,7 @@ import sys
 import os
 import json
 import shutil
+import threading
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -31,6 +32,48 @@ BACKUP_DIR = Path(os.environ.get("PORTFOLIO_BACKUP_DIR", DATA_DIR / "backups"))
 BACKUP_KEEP_DAYS = 14
 
 _last_backup_ts = 0.0
+EXCEL_LOCK = threading.RLock()
+
+
+def save_workbook(wb, path=None):
+    """原子保存：先写临时文件再替换，网页不会读到写了一半的 Excel"""
+    path = Path(path or EXCEL_PATH)
+    tmp = path.with_name(f".{path.stem}.tmp{path.suffix}")
+    with EXCEL_LOCK:
+        try:
+            wb.save(tmp)
+            os.replace(tmp, path)
+        finally:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+
+
+def cleanup_old_files(days=14):
+    """清理过期日志和根目录的历史备份；每类保留最近若干份，超期才删"""
+    rules = {
+        "server_*.log": 5,
+        "portfolio_backup_*.xlsx": 2,
+        "*_backup_*.py": 2,
+        "*_backup_*.html": 2,
+    }
+    cutoff = time.time() - days * 86400
+    removed = 0
+    for pattern, keep in rules.items():
+        files = sorted(DATA_DIR.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+        for p in files[keep:]:
+            try:
+                st = p.stat()
+                # 日志按份数轮转，备份同时看保留天数
+                if not pattern.startswith("server_") and st.st_mtime >= cutoff:
+                    continue
+                p.unlink()
+                removed += 1
+            except OSError:
+                pass
+    return removed
 
 
 def auto_backup(reason="before_write", force=False, min_interval=300):
@@ -218,7 +261,7 @@ def save_holdings(holdings_data):
     # 记录编辑日志
     _log_edit(old_holdings, new_holdings, wb)
 
-    wb.save(EXCEL_PATH)
+    save_workbook(wb)
     wb.close()
     return load_portfolio()
 
@@ -316,7 +359,7 @@ def save_memory(content):
         # 限制最多 50 条，删最早的
         while ws.max_row > 51:
             ws.delete_rows(2)
-        wb.save(EXCEL_PATH)
+        save_workbook(wb)
         wb.close()
         return True
     except Exception:
@@ -348,7 +391,7 @@ def clear_memories():
         if "记忆" in wb.sheetnames:
             ws = wb["记忆"]
             ws.delete_rows(2, ws.max_row)
-            wb.save(EXCEL_PATH)
+            save_workbook(wb)
         wb.close()
         return True
     except Exception:
@@ -367,7 +410,7 @@ def save_prices(holdings):
         ws.cell(row=i, column=9, value=h["盈亏"])
         ws.cell(row=i, column=10, value=h["收益率"])
         ws.cell(row=i, column=11, value=h["仓位占比"])
-    wb.save(EXCEL_PATH)
+    save_workbook(wb)
     wb.close()
 
 
@@ -460,7 +503,7 @@ def save_networth_snapshot(total, pnl, detail):
     ws.cell(row=last_row, column=8, value="收盘记录")
     # 备份持仓作为"昨日持仓"，供次日计算今日盈亏
     _backup_holdings_as_yesterday(wb)
-    wb.save(EXCEL_PATH)
+    save_workbook(wb)
     print(f"📝 已记录净值快照: {today}  总资产 {total:,.0f} 元")
     wb.close()
     return True
@@ -530,7 +573,7 @@ def record_realized_pnl(name, qty=0, price=0, cost=0, action="清仓", amount=No
             ws = wb["已实现盈亏"]
         record_date = str(date).strip() if date else datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M")
         ws.append([record_date, name, action, qty, round(price, 3), round(cost, 3), round(pnl, 2)])
-        wb.save(EXCEL_PATH)
+        save_workbook(wb)
         wb.close()
         print(f"📝 已记录已实现盈亏: {name} {action} {qty}股, 盈亏 {pnl:+,.0f}元")
     except Exception as e:
@@ -657,7 +700,7 @@ def add_corporate_action(date, code, name, action_type, amount, note=""):
             ws = wb[CORPORATE_SHEET]
         ws.append([date, code, name, action_type, round(float(amount), 2), None, None,
                    note or "手工记录", "手工"])
-        wb.save(EXCEL_PATH)
+        save_workbook(wb)
         wb.close()
         return True
     except Exception as e:
@@ -673,7 +716,7 @@ def delete_corporate_action(row_num):
             wb.close()
             return False
         ws.delete_rows(row_num)
-        wb.save(EXCEL_PATH)
+        save_workbook(wb)
         wb.close()
         return True
     except Exception as e:
@@ -736,7 +779,7 @@ def update_realized_pnl(row_num, name=None, amount=None, date=None, qty=None, pr
             ws.cell(row=row_num, column=6, value=round(float(cost), 3))
         if amount is not None:
             ws.cell(row=row_num, column=7, value=round(float(amount), 2))
-        wb.save(EXCEL_PATH)
+        save_workbook(wb)
         wb.close()
         print(f"📝 已更新已实现盈亏: 行{row_num}")
         return True
@@ -764,7 +807,7 @@ def delete_realized_pnl(row_num):
             ws.cell(row=row_num, column=col, value=None)
         # 可选：压缩行（删除空行）
         ws.delete_rows(row_num)
-        wb.save(EXCEL_PATH)
+        save_workbook(wb)
         wb.close()
         print(f"🗑️ 已删除已实现盈亏: 行{row_num}")
         return True
@@ -1100,7 +1143,7 @@ def record_transaction(data):
         preview["ledger_qty_after"],
         preview["ledger_cost_after"],
     ])
-    wb.save(EXCEL_PATH)
+    save_workbook(wb)
     wb.close()
 
     if not sync:
@@ -1214,7 +1257,7 @@ def undo_last_transaction():
                     and str(pnl_ws.cell(r, 1).value or "")[:10] == t["date"][:10]):
                 pnl_ws.delete_rows(r)
                 break
-    wb.save(EXCEL_PATH)
+    save_workbook(wb)
     wb.close()
 
     save_holdings(rows)
@@ -1287,7 +1330,7 @@ def add_capital_flow(amount, flow_type, note=""):
             ws = wb["出入金"]
         now = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M")
         ws.append([now, flow_type, amount, note])
-        wb.save(EXCEL_PATH)
+        save_workbook(wb)
         wb.close()
         return True
     except Exception as e:
@@ -1334,7 +1377,7 @@ def update_capital_flow(row, amount, flow_type, note=""):
         ws.cell(row=row, column=2, value=flow_type)
         ws.cell(row=row, column=3, value=amount)
         ws.cell(row=row, column=4, value=note)
-        wb.save(EXCEL_PATH)
+        save_workbook(wb)
         wb.close()
         return True
     except Exception as e:
@@ -1351,7 +1394,7 @@ def delete_capital_flow(row):
             return False
         ws = wb["出入金"]
         ws.delete_rows(row)
-        wb.save(EXCEL_PATH)
+        save_workbook(wb)
         wb.close()
         return True
     except Exception as e:
@@ -1386,7 +1429,7 @@ def get_net_capital():
                 else:
                     ws = wb["出入金"]
                 ws.append([datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M"), "存入", round(cost, 2), "初始本金（自动记录）"])
-                wb.save(EXCEL_PATH)
+                save_workbook(wb)
                 wb.close()
                 return round(cost, 2), 1
             except Exception:
