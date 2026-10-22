@@ -343,6 +343,7 @@ function switchTab(name, btn) {
     const tabName = "tab" + name.charAt(0).toUpperCase() + name.slice(1);
     const tab = document.getElementById(tabName);
     if (tab) tab.classList.add("active");
+    updateChatDock(name);
     // 按需加载数据
     if (name === "breakeven") loadBreakeven();
     if (name === "cleared") renderCleared();
@@ -354,6 +355,32 @@ function switchTab(name, btn) {
 }
 
 // ============ 对话框 ============
+// 对话只在「今日」「持仓」页出现，收进内容区底部
+function updateChatDock(name) {
+    const panel = document.getElementById("chatPanel");
+    if (panel) panel.classList.toggle("show", name === "today" || name === "holdings");
+}
+
+function toggleChatDock() {
+    const panel = document.getElementById("chatPanel");
+    const btn = document.getElementById("chatToggleBtn");
+    panel.classList.toggle("collapsed");
+    const collapsed = panel.classList.contains("collapsed");
+    btn.textContent = collapsed ? "▸" : "▾";
+    btn.title = collapsed ? "展开对话" : "收起对话";
+    try { localStorage.setItem("chat_dock_collapsed", collapsed ? "1" : "0"); } catch(e) {}
+}
+
+function initChatDock() {
+    try {
+        if (localStorage.getItem("chat_dock_collapsed") !== "1") return;
+        document.getElementById("chatPanel").classList.add("collapsed");
+        const btn = document.getElementById("chatToggleBtn");
+        btn.textContent = "▸";
+        btn.title = "展开对话";
+    } catch(e) {}
+}
+
 async function sendMessage() {
     const input = document.getElementById("chatInput");
     const text = input.value.trim();
@@ -2807,15 +2834,15 @@ loadToday();
 loadMarketView();
 loadQuietDays();
 
+initChatDock();
+
 // 加载聊天历史（没有历史则显示默认问候）
 if (!loadChatHistory()) {
     document.getElementById("chatMessages").innerHTML = `<div class="msg assistant">
-        👋 你好！我是你的投资 Agent。我可以：
-        <br>• 分析你的持仓和风险
-        <br>• 给仓位管理建议
-        <br>• 联网搜索最新市场信息
-        <br>• 回答理财问题
-        <br><br>试试问我："帮我分析持仓风险" 或 "查一下今天A股行情"
+        👋 你好，我是你的投资 Agent。可以直接问我：<br>
+        • 帮我分析持仓风险<br>
+        • 今天该不该动手<br>
+        • 查一下最新行情
     </div>`;
 }
 

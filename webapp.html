@@ -13,7 +13,7 @@
 
 <!-- ===== 顶部 ===== -->
 <div class="header">
-    <h1 onclick="switchLayout('split')" title="点击切换布局">📈 给老子涨</h1>
+    <h1>📈 给老子涨</h1>
     <div class="header-actions" style="display:flex;align-items:center;gap:12px;">
         <span class="status-bar" id="statusBar">就绪</span>
         <button class="btn btn-sm btn-outline" id="eyeToggle" onclick="toggleEye()" title="隐藏/显示金额">👁️</button>
@@ -28,22 +28,22 @@
 <div class="main-layout" id="mainLayout">
     <!-- ===== 左面板 ===== -->
     <div class="left-panel" id="leftPanel">
-        <div class="kpi-row" id="kpiRow" style="grid-template-columns:repeat(5,1fr);">
+        <div class="kpi-row" id="kpiRow">
             <div class="kpi-card"><div class="label">总资产</div><div class="value" id="kpiTotal">--</div><div class="sub">元</div></div>
             <div class="kpi-card"><div class="label">累计盈亏</div><div class="value" id="kpiPnl">--</div><div class="sub" id="kpiReturn">--</div></div>
             <div class="kpi-card"><div class="label">今日盈亏</div><div class="value" id="kpiToday">--</div><div class="sub" id="kpiTodaySub">--</div></div>
             <div class="kpi-card" onclick="switchTab('risks')"><div class="label">风险项</div><div class="value" id="kpiRisk">--</div><div class="sub" id="kpiRiskLabel">待处理</div></div>
             <div class="kpi-card"><div class="label">股票</div><div class="value" id="kpiCount">--</div><div class="sub">只</div></div>
         </div>
-        <div class="kpi-row" id="kpiRow2" style="grid-template-columns:repeat(5,1fr);margin-top:0;">
-            <div class="kpi-card"><div class="label">A股主账户</div><div class="value" id="kpiAcct1" style="font-size:18px;">--</div><div class="sub" id="kpiAcct1Pnl">--</div></div>
-            <div class="kpi-card"><div class="label">黄金</div><div class="value" id="kpiGold" style="color:#FFC000;font-size:18px;">--</div><div class="sub" id="kpiGoldPnl">--</div><div class="sub" id="kpiGoldSold" style="font-size:11px;color:#999;">已卖出变现 --</div></div>
-            <div class="kpi-card"><div class="label">账户二（短线）</div><div class="value" id="kpiAcct2" style="font-size:18px;">--</div><div class="sub" id="kpiAcct2Pnl">--</div></div>
-            <div class="kpi-card"><div class="label">现金</div><div class="value" id="kpiCash" style="color:#2F5496;font-size:18px;">--</div><div class="sub">可用资金</div></div>
-            <div class="kpi-card"><div class="label">清仓盈亏</div><div class="value" id="kpiRealized">--</div><div class="sub">已实现盈亏</div></div>
+        <div class="kpi-strip" id="kpiRow2">
+            <div class="kpi-inline"><span class="label">A股主账户</span><span class="value" id="kpiAcct1">--</span><span class="sub" id="kpiAcct1Pnl">--</span></div>
+            <div class="kpi-inline"><span class="label">黄金</span><span class="value" id="kpiGold" style="color:#C9A227;">--</span><span class="sub" id="kpiGoldPnl">--</span><span class="sub sold" id="kpiGoldSold">已卖出 --</span></div>
+            <div class="kpi-inline"><span class="label">账户二（短线）</span><span class="value" id="kpiAcct2">--</span><span class="sub" id="kpiAcct2Pnl">--</span></div>
+            <div class="kpi-inline"><span class="label">现金</span><span class="value" id="kpiCash" style="color:#2F5496;">--</span></div>
+            <div class="kpi-inline"><span class="label">清仓盈亏</span><span class="value" id="kpiRealized">--</span></div>
         </div>
 
-        <div style="flex:1;display:flex;flex-direction:column;min-height:0;">
+        <div class="tab-area">
             <div class="tab-bar">
                 <button class="tab-btn active" data-tab="today" onclick="switchTab('today',this)">☀️ 今日</button>
                 <button class="tab-btn" data-tab="holdings" onclick="switchTab('holdings',this)">📋 持仓</button>
@@ -309,27 +309,28 @@
                 <div id="decisionsEmpty" class="empty-state" style="display:none;"><div class="icon">🗂</div><div>还没有决策记录</div></div>
             </div>
         </div>
-    </div>
 
-    <!-- ===== 右面板：对话 ===== -->
-    <div class="chat-panel" id="chatPanel">
-        <div class="chat-header">
-            <h2>💬 对话 Agent</h2>
-            <div class="chat-actions">
-                <span id="modelBadge" style="font-size:11px;color:#888;background:#f0f4f8;padding:2px 8px;border-radius:4px;"></span>
-                <button class="btn btn-sm btn-outline" onclick="clearChat()" title="清空对话">🗑️</button>
+        <!-- ===== 对话（今日 / 持仓页内） ===== -->
+        <div class="chat-panel show" id="chatPanel">
+            <div class="chat-header">
+                <h2>💬 对话 Agent</h2>
+                <div class="chat-actions">
+                    <span id="modelBadge" class="model-badge"></span>
+                    <button class="btn btn-sm btn-outline" onclick="clearChat()" title="清空对话">🗑️</button>
+                    <button class="btn btn-sm btn-outline" id="chatToggleBtn" onclick="toggleChatDock()" title="收起对话">▾</button>
+                </div>
             </div>
-        </div>
-        <div class="chat-messages" id="chatMessages">
-        </div>
-        <div class="chat-input-area">
-            <div class="chat-input-row">
-                <input type="text" id="chatInput" placeholder="输入你的问题..." onkeydown="if(event.key==='Enter') sendMessage()">
-                <button class="send-btn" id="sendBtn" onclick="sendMessage()">发送</button>
+            <div class="chat-messages" id="chatMessages">
             </div>
-            <div class="chat-options">
-                <label><input type="checkbox" id="searchToggle" checked> 联网搜索</label>
-                <span id="chatStatus" style="color:#888;"></span>
+            <div class="chat-input-area">
+                <div class="chat-input-row">
+                    <input type="text" id="chatInput" placeholder="问持仓、问行情，让 AI 分析…" onkeydown="if(event.key==='Enter') sendMessage()">
+                    <button class="send-btn" id="sendBtn" onclick="sendMessage()">发送</button>
+                </div>
+                <div class="chat-options">
+                    <label><input type="checkbox" id="searchToggle" checked> 联网搜索</label>
+                    <span id="chatStatus" style="color:#888;"></span>
+                </div>
             </div>
         </div>
     </div>

@@ -1,12 +1,12 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
     background: #f5f7fa; color: #1a1a2e; padding: 20px; overflow: hidden; height: 100vh; }
-.container { max-width: 1360px; margin: 0 auto; display: flex; flex-direction: column; height: calc(100vh - 40px); }
+.container { max-width: 1440px; margin: 0 auto; display: flex; flex-direction: column; height: calc(100vh - 40px); }
 
 /* 顶部导航 */
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; padding-bottom: 12px;
     border-bottom: 2px solid #2F5496; flex-shrink: 0; }
-.header h1 { font-size: 20px; color: #2F5496; cursor: pointer; }
+.header h1 { font-size: 20px; color: #2F5496; }
 .header .time { font-size: 12px; color: #888; }
 .header-actions { display: flex; gap: 8px; align-items: center; }
 
@@ -24,35 +24,41 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
     border-top-color: #2F5496; border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* 主布局：左面板 + 右聊天 */
-.main-layout { display: flex; gap: 16px; flex: 1; min-height: 0; }
-.left-panel { flex: 1; display: flex; flex-direction: column; gap: 12px; overflow: hidden; min-width: 0; }
+/* 主布局：单列，对话收进「今日 / 持仓」内容区 */
+.main-layout { display: flex; flex: 1; min-height: 0; }
+.left-panel { flex: 1; display: flex; flex-direction: column; gap: 10px; overflow: hidden; min-width: 0; }
+.tab-area { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 
-/* 右聊天面板 */
-.chat-panel { width: 300px; flex-shrink: 0; background: #fff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-    display: flex; flex-direction: column; overflow: hidden; }
-.chat-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px 10px;
+/* 对话面板：今日 / 持仓页底部占满宽度，可收起 */
+.chat-panel { display: none; height: 252px; flex-shrink: 0; background: #fff; border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06); flex-direction: column; overflow: hidden; }
+.chat-panel.show { display: flex; }
+.chat-panel.collapsed { height: auto; }
+.chat-panel.collapsed .chat-messages, .chat-panel.collapsed .chat-input-area { display: none; }
+.chat-header { display: flex; justify-content: space-between; align-items: center; padding: 9px 16px;
     border-bottom: 1px solid #eee; flex-shrink: 0; }
-.chat-header h2 { font-size: 15px; color: #2F5496; }
+.chat-panel.collapsed .chat-header { border-bottom: none; }
+.chat-header h2 { font-size: 14px; color: #2F5496; }
 .chat-header .chat-actions { display: flex; gap: 6px; align-items: center; }
-.chat-messages { flex: 1; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 12px; }
-.chat-input-area { padding: 12px 18px 14px; border-top: 1px solid #eee; flex-shrink: 0; }
+.model-badge { font-size: 11px; color: #888; background: #f0f4f8; padding: 2px 8px; border-radius: 4px; }
+.chat-messages { flex: 1; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+.chat-input-area { padding: 9px 16px 11px; border-top: 1px solid #eee; flex-shrink: 0; }
 .chat-input-row { display: flex; gap: 8px; }
-.chat-input-row input { flex: 1; padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px;
+.chat-input-row input { flex: 1; padding: 8px 14px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px;
     outline: none; font-family: inherit; }
 .chat-input-row input:focus { border-color: #2F5496; }
 .chat-input-row .send-btn { background: #2F5496; color: #fff; border: none; border-radius: 8px;
-    padding: 10px 20px; font-size: 14px; cursor: pointer; white-space: nowrap; }
+    padding: 8px 20px; font-size: 13px; cursor: pointer; white-space: nowrap; }
 .chat-input-row .send-btn:disabled { background: #999; cursor: not-allowed; }
 .chat-options { display: flex; gap: 14px; margin-top: 8px; font-size: 12px; color: #888; }
 .chat-options label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
 
 /* 聊天气泡 */
-.msg { max-width: 85%; padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.6;
+.msg { max-width: 78%; padding: 9px 14px; border-radius: 12px; font-size: 13.5px; line-height: 1.65;
     word-break: break-word; animation: fadeIn 0.2s ease; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 .msg.user { align-self: flex-end; background: #2F5496; color: #fff; border-bottom-right-radius: 4px; }
-.msg.assistant { align-self: flex-start; background: #f0f4f8; color: #1a1a2e; border-bottom-left-radius: 4px; }
+.msg.assistant { align-self: flex-start; background: #f0f4f8; color: #1a1a2e; border-bottom-left-radius: 4px; max-width: 800px; }
 .msg.system { align-self: center; background: #fffbe6; color: #8a7a2a; font-size: 12px; padding: 6px 12px; border-radius: 6px; }
 .msg .thinking { font-size: 12px; color: #888; padding: 4px 0; }
 .msg .streaming-cursor::after { content: "▊"; animation: blink 0.8s infinite; color: #2F5496; }
@@ -68,11 +74,22 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .msg ul, .msg ol { padding-left: 18px; }
 
 /* KPI行 */
-.kpi-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; flex-shrink: 0; }
-.kpi-card { background: #fff; border-radius: 10px; padding: 12px 16px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); cursor: pointer; }
-.kpi-card .label { font-size: 12px; color: #888; }
-.kpi-card .value { font-size: 18px; font-weight: 700; margin: 2px 0; }
-.kpi-card .sub { font-size: 12px; }
+.kpi-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; flex-shrink: 0; }
+.kpi-card { background: #fff; border-radius: 9px; padding: 7px 13px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); cursor: pointer; }
+.kpi-card .label { font-size: 11px; color: #888; line-height: 1.3; }
+.kpi-card .value { font-size: 16px; font-weight: 700; margin: 1px 0; line-height: 1.25; }
+.kpi-card .sub { font-size: 11px; line-height: 1.3; }
+
+/* 第二排：账户概览横条 */
+.kpi-strip { display: grid; grid-template-columns: repeat(5, 1fr); background: #fff; border-radius: 9px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05); padding: 6px 0; flex-shrink: 0; }
+.kpi-inline { display: flex; align-items: baseline; justify-content: center; gap: 7px; flex-wrap: wrap;
+    padding: 1px 12px; border-left: 1px solid #eef0f4; min-width: 0; }
+.kpi-inline:first-child { border-left: none; }
+.kpi-inline .label { font-size: 11px; color: #888; white-space: nowrap; }
+.kpi-inline .value { font-size: 14px; font-weight: 700; white-space: nowrap; }
+.kpi-inline .sub { font-size: 11px; white-space: nowrap; }
+.kpi-inline .sub.sold { flex-basis: 100%; text-align: center; font-size: 10px; color: #999; }
 .up { color: #CC0000; } .down { color: #009900; }
 
 /* 持仓+图表区 (tabs) */
@@ -325,10 +342,13 @@ tr:hover { background: #f8f9ff; }
     .header h1 { font-size: 16px; }
     .main-layout { flex-direction: column; overflow: visible; }
     .left-panel { overflow: visible; }
-    .chat-panel { width: 100%; height: 70vh; }
-    .kpi-row { grid-template-columns: repeat(2, 1fr) !important; gap: 6px; }
+    .tab-area { min-height: 60vh; }
+    .chat-panel.show { display: flex; width: 100%; height: 60vh; }
+    .kpi-row { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+    .kpi-strip { grid-template-columns: repeat(2, 1fr); row-gap: 6px; }
+    .kpi-inline { justify-content: flex-start; padding: 2px 10px; }
     .kpi-card { padding: 8px 10px; }
-    .kpi-card .value { font-size: 17px; }
+    .kpi-card .value { font-size: 15px; }
     .accounts-row { grid-template-columns: 1fr; }
     .charts-row { grid-template-columns: 1fr; }
     .table-wrap { max-height: none; overflow-x: auto; }
@@ -364,12 +384,12 @@ tr:hover { background: #f8f9ff; }
 
 /* 小眼睛 — 隐藏金额（只作用于顶部 KPI 卡片的大数字） */
 .eye-closed #kpiRow .kpi-card .value,
-.eye-closed #kpiRow2 .kpi-card .value {
+.eye-closed #kpiRow2 .kpi-inline .value {
     visibility: hidden;
     position: relative;
 }
 .eye-closed #kpiRow .kpi-card .value::after,
-.eye-closed #kpiRow2 .kpi-card .value::after {
+.eye-closed #kpiRow2 .kpi-inline .value::after {
     visibility: visible;
     content: "****";
     display: block;
