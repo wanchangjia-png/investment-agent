@@ -6,8 +6,10 @@ PDF 文本提取会丢失列间距，这里按字符坐标还原表格。
 import os
 import re
 import json
+from copy import copy
 from datetime import datetime
 
+import openpyxl
 import PyPDF2
 
 # 列区间（按 PDF 坐标，左闭右开）
@@ -168,20 +170,81 @@ APP_NAMES = {
     "605499": "东鹏饮料",
 }
 SEC_TYPES = {"证券买入", "证券卖出", "新股入账"}
-STMT_SOURCE = "对账单 2026/07/22-2026/10/22"
 
 
 def _app_name(code, name):
     return APP_NAMES.get(code) or name.replace(" ", "")
 
 
-def build_ledger(data):
-    """按日期滚动真实成本，返回可直接写入「交易流水」的行。"""
-    opening = opening_positions(data["trades"], data["summary"])
+def _stmt_source(meta):
+    return f"对账单 {meta.get('query_range', '')}".strip()
+
+
+def _query_range(meta):
+    rng = str(meta.get("query_range") or "")
+    m = re.match(r"(\d{4})/(\d{2})/(\d{2})\s*-\s*(\d{4})/(\d{2})/(\d{2})", rng)
+    if not m:
+        return None, None
+    return (f"{m.group(1)}-{m.group(2)}-{m.group(3)}",
+            f"{m.group(4)}-{m.group(5)}-{m.group(6)}")
+
+
+def _ledger_opening_state(excel_path, before_date):
+    """窗口开始前最后一个交易日的结存数量/成本（来自现有交易流水）。"""
+    if not before_date or not os.path.exists(excel_path):
+        return {}
+    try:
+        wb = openpyxl.load_workbook(excel_path, data_only=True, read_only=True)
+        if "交易流水" not in wb.sheetnames:
+            wb.close()
+            return {}
+        best = {}
+        for row in wb["交易流水"].iter_rows(min_row=2, max_col=15, values_only=True):
+            date = str(row[0] or "")[:10]
+            code = str(row[4] or "")
+            if not code or date >= before_date or len(row) < 15:
+                continue
+            qty, cost = row[13], row[14]
+            if qty is None:
+                continue
+            if code not in best or date >= best[code][0]:
+                best[code] = (date, float(qty), float(cost or 0))
+        wb.close()
+        return {code: [v[1], v[2]] for code, v in best.items()}
+    except Exception:
+        return {}
+
+
+def _merge_opening(reverse, ledger_state, summary_cost):
+    """以流水结存为准；流水缺的仓位用对账单反推值补上。"""
+    out = {}
+    for code, info in reverse.items():
+        qty = info["qty"]
+        if abs(qty) < 1e-9:
+            continue
+        led = ledger_state.get(code)
+        if led and abs(led[0]) > 1e-9:
+            out[code] = {"qty": led[0], "cost": led[1]}
+        else:
+            out[code] = {"qty": qty,
+                         "cost": summary_cost.get(code) or OPENING_COST.get(code, 0.0)}
+    return out
+
+
+def build_ledger(data, opening=None):
+    """按日期滚动真实成本，返回可直接写入「交易流水」的行。
+
+    opening 是窗口开始前的 {code: {"qty":..., "cost":...}}；不传则按
+    「期末持仓 − 区间买卖」反推，并用 7/21 的起点成本兜底。
+    """
+    if opening is None:
+        opening = opening_positions(data["trades"], data["summary"])
     state, last_cost = {}, {}
     for code, info in opening.items():
         q = info["qty"]
-        c = OPENING_COST.get(code, 0.0)
+        c = info.get("cost")
+        if c is None:
+            c = OPENING_COST.get(code, 0.0)
         state[code] = [q, c]
         last_cost[code] = c
 
@@ -255,31 +318,37 @@ def _atomic_save(wb, path):
             os.remove(tmp)
 
 
-def _upsert_transactions(ws, rows):
+def _upsert_transactions(ws, rows, start=None, end=None):
     # 旧版占位行是 A2:J2 合并单元格，不清掉会把首条流水写坏
     for rng in list(ws.merged_cells.ranges):
         ws.unmerge_cells(str(rng))
     # 旧表头只有 A–J，补齐复盘列
     for i, header in enumerate(LEDGER_HEADERS, 1):
         ws.cell(1, i, header)
-    # 清掉上次同一来源的导入，保证可重复执行
+    # 只替换对账单区间内的导入行；短区间对账单不会覆盖更早的历史流水
     for r in range(ws.max_row, 1, -1):
         note = str(ws.cell(r, 10).value or "")
         first = ws.cell(r, 1).value
+        date = str(first)[:10] if first else ""
+        in_range = not (start and end) or (start <= date <= end)
         malformed = (ws.cell(r, 2).value is None and ws.cell(r, 14).value is not None)
-        if (note.startswith("对账单导入") or "新股入账" in note
-                or (isinstance(first, str) and first.startswith("（")) or malformed):
+        if in_range and (note.startswith("对账单导入") or "新股入账" in note
+                         or (isinstance(first, str) and first.startswith("（"))):
+            ws.delete_rows(r)
+        elif malformed:
             ws.delete_rows(r)
     for row in rows:
         ws.append(row)
 
 
-def _write_corporate_actions(wb, data):
+def _write_corporate_actions(wb, data, source, start=None, end=None):
     name = "公司行为"
     if name in wb.sheetnames:
         ws = wb[name]
         for r in range(ws.max_row, 1, -1):
-            if ws.cell(r, 9).value == STMT_SOURCE:
+            src = str(ws.cell(r, 9).value or "")
+            date = str(ws.cell(r, 1).value or "")[:10]
+            if src.startswith("对账单") and (not (start and end) or start <= date <= end):
                 ws.delete_rows(r)
     else:
         ws = wb.create_sheet(name)
@@ -298,7 +367,7 @@ def _write_corporate_actions(wb, data):
         rows.append([
             t["date"], t["code"], _app_name(t["code"], t["name"]),
             type_map[t["type"]], t["amount"], t["qty"], t["price"],
-            "对账单导入", STMT_SOURCE,
+            "对账单导入", source,
         ])
     rows.sort(key=lambda r: r[0])
     for row in rows:
@@ -317,10 +386,32 @@ def _update_holdings(wb, data):
                 return r
         return None
 
+    def insert_row():
+        total_row = next((r for r in range(2, ws.max_row + 1)
+                          if ws.cell(r, 1).value == "合计"), None)
+        last_stock = None
+        for r in range(2, ws.max_row + 1):
+            if ws.cell(r, 1).value == "股票" and ws.cell(r, 2).value == "A股主账户":
+                last_stock = r
+        if total_row:
+            ws.insert_rows(total_row)
+            new_row = total_row
+        else:
+            new_row = ws.max_row + 1
+        if last_stock:
+            for c in range(1, 13):
+                src = ws.cell(last_stock, c)
+                if src.has_style:
+                    ws.cell(new_row, c)._style = copy(src._style)
+        return new_row
+
     for code, s in summary.items():
         r = row_of(code)
         if r is None:
-            continue
+            r = insert_row()
+            ws.cell(r, 1, "股票")
+            ws.cell(r, 2, "A股主账户")
+            ws.cell(r, 4, code)
         ws.cell(r, 3, _app_name(code, s["name"]))
         ws.cell(r, 5, s["qty"])
         ws.cell(r, 6, s["cost"])
@@ -329,15 +420,17 @@ def _update_holdings(wb, data):
         ws.cell(r, 8, s["value"])
         ws.cell(r, 9, pnl)
         ws.cell(r, 10, round(pnl / (s["cost"] * s["qty"]), 4) if s["cost"] and s["qty"] else 0)
-        if code == "002475":
-            ws.cell(r, 12, "对账单：已清仓（10/19 卖出最后 100 股）")
+        note = ws.cell(r, 12).value
+        if isinstance(note, str) and note.startswith("对账单："):
+            ws.cell(r, 12).value = None
 
     # 账户一现金：总资产 - 证券市值
+    printed = str(data["meta"].get("printed_at", ""))[:10]
     for r in range(2, ws.max_row + 1):
         if ws.cell(r, 1).value == "现金" and ws.cell(r, 2).value == "A股主账户":
             ws.cell(r, 5, cash_total)
             ws.cell(r, 8, cash_total)
-            ws.cell(r, 12, "对账单 10/22：资金可用 50,268.80 + 余额 0.10（44.06 中含今日分红 43.96 未计总资产）")
+            ws.cell(r, 12, f"对账单 {printed}：可用资金 {cash_total:,.2f}")
             break
 
     # 仓位占比仍按账户一股票市值合计
@@ -363,16 +456,22 @@ def _update_holdings(wb, data):
 
 
 def import_statement(pdf_path, password, excel_path="portfolio.xlsx", dry_run=False):
-    import openpyxl
     data = parse_pdf(pdf_path, password)
-    ledger, warnings, state = build_ledger(data)
+    start, end = _query_range(data["meta"])
+    opening = _merge_opening(
+        opening_positions(data["trades"], data["summary"]),
+        _ledger_opening_state(excel_path, start),
+        {s["code"]: s["cost"] for s in data["summary"]},
+    )
+    ledger, warnings, state = build_ledger(data, opening)
     if dry_run:
-        return {"meta": data["meta"], "ledger": ledger, "warnings": warnings, "state": state}
+        return {"meta": data["meta"], "ledger": ledger, "warnings": warnings,
+                "state": state, "range": [start, end]}
 
     wb = openpyxl.load_workbook(excel_path)
     ws = wb["交易流水"]
-    _upsert_transactions(ws, ledger)
-    actions = _write_corporate_actions(wb, data)
+    _upsert_transactions(ws, ledger, start, end)
+    actions = _write_corporate_actions(wb, data, _stmt_source(data["meta"]), start, end)
     cash_total, stock_total = _update_holdings(wb, data)
     _atomic_save(wb, excel_path)
     wb.close()
