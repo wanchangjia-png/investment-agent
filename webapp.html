@@ -2576,6 +2576,8 @@ function renderMarketView(d) {
 
     const perm = d.buy_permission || "";
     const permCls = perm === "可以恢复买入" ? "good" : perm === "只能小幅试买" ? "warn" : "bad";
+    const sl = d.stop_loss || "暂不止损";
+    const slCls = sl.includes("该止损") ? "bad" : sl.includes("观察") ? "warn" : "good";
     const row = (k, v) => v ? `<div class="row"><span class="k">${k}</span>${escapeHtml(v)}</div>` : "";
     const short = t => t.length > 28 ? t.slice(0, 28) + "…" : t;
     const srcList = d.sources || [];
@@ -2595,6 +2597,9 @@ function renderMarketView(d) {
     document.getElementById("marketBody").innerHTML = `
         <div class="row"><span class="k">今天能不能买：</span>
             <span class="market-stance ${permCls}" style="font-size:12.5px;">${escapeHtml(perm || "继续暂停")}</span></div>
+        <div class="row"><span class="k">该不该止损：</span>
+            <span class="market-stance ${slCls}" style="font-size:12.5px;">${escapeHtml(sl || "暂不止损")}</span>
+            ${d.stop_loss_note ? `<div style="margin-top:4px;">${escapeHtml(d.stop_loss_note)}</div>` : ""}</div>
         ${row("一句话", d.summary)}
         ${row("大盘", d.market_note)}
         ${row("账户", d.account_note)}

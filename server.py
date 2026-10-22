@@ -1052,6 +1052,8 @@ def _load_market_view(max_age_min=30):
         if not _cache_fresh(at, max_age_min):
             return None
         data = json.loads(last[4])
+        if "stop_loss" not in data:
+            return None
         data["sources"] = json.loads(last[5]) if last[5] else []
         _market_cache["at"] = at
         _market_cache["data"] = data
@@ -1092,6 +1094,13 @@ def _rule_market_view(snap, note=""):
         f"净值{stance}：低点后 {nav.get('days_since_low', 0)} 个净值日不创新低、"
         f"回升 {nav.get('rebound_pct', 0):+.1f}%；沪深300 20 日 {ms.get('ret_20d', 0):+.1f}%。"
     )
+    red = disc.get("red_lines") or []
+    if red:
+        stop_loss = "该止损"
+        stop_note = "；".join(r.get("message", "") for r in red) + "。触线就按纪律执行，别拖。"
+    else:
+        stop_loss = "暂不止损"
+        stop_note = "没有持仓触发 -20% 红线，按纪律继续持有。"
     return {
         "stance": stance, "confidence": "低", "summary": summary,
         "market_note": (f"沪深300 最新 {ms.get('close', '—')}，20 日 {ms.get('ret_20d', 0):+.1f}%，"
@@ -1101,6 +1110,7 @@ def _rule_market_view(snap, note=""):
         "reason": note or "未配置 AI Key，只能按大盘和净值规则判断，无法结合新闻。",
         "what_changes": "连续 3 个净值日不创新低且回升 2%，同时大盘不再创新低。",
         "buy_permission": "继续暂停",
+        "stop_loss": stop_loss, "stop_loss_note": stop_note,
         "evidence": [], "sources": [],
         "rule": {"stance": stance, "days_since_low": nav.get("days_since_low", 0),
                  "rebound_pct": nav.get("rebound_pct", 0), "trough_date": nav.get("trough_date", "")},
@@ -1122,6 +1132,15 @@ def _ai_market_view():
     perf_m = (snap.get("performance") or {}).get("metrics", {})
     attr = (snap.get("attribution") or {}).get("items", [])[:5]
     rec = snap.get("recovery") or {}
+
+    holdings_lines = []
+    for p in exp.get("positions") or []:
+        if not p.get("qty"):
+            continue
+        ret = p.get("return_pct", 0)
+        holdings_lines.append(
+            f"- {p['name']}：{p['qty']} 股，成本 {p['cost']:.3f}，现价 {p['price']:.3f}，"
+            f"{'浮盈' if ret >= 0 else '浮亏'} {ret:+.1f}%，占总资产 {p['pct_total']:.1f}%")
 
     today = datetime.now().strftime("%Y-%m-%d")
     names = [p.get("name", "") for p in (exp.get("positions") or [])]
@@ -1175,6 +1194,11 @@ def _ai_market_view():
 - 总资产 {exp.get('total_value', 0):,.0f} 元；现金 {exp.get('cash', 0):,.0f} 元（{exp.get('cash_pct', 0):.1f}%，底线 20%）
 - 前三大持仓合计 {exp.get('top3_pct', 0):.1f}%；最大单票 {exp.get('top1_pct', 0):.1f}%
 - 补仓五关：{gates_text}
+- 已触发的止损红线：{'；'.join(r.get('message', '') for r in disc.get('red_lines') or []) or '无'}
+- 止盈提醒：{'；'.join(t.get('message', '') for t in disc.get('take_profit') or []) or '无'}
+
+## 持仓明细（判断该不该止损用）
+{chr(10).join(holdings_lines) or '- 无股票持仓'}
 
 ## 盈亏拖累
 {chr(10).join(f"- {x['name']}：{x['pnl']:+,.0f} 元（{x['share']:+.0f}%）" for x in attr) or '- 无'}
@@ -1188,13 +1212,14 @@ def _ai_market_view():
 1. 只能引用上面出现的数字和新闻标题/摘要，禁止编造新闻、政策、支撑位、压力位、点位预测。
 2. 严格区分「市场企稳」和「账户净值企稳」，不要混为一谈。
 3. 必须遵守她的纪律：现金低于 20% 时，buy_permission 最多只能是「继续暂停」；补仓五关未过，不能建议买入。
-4. 新闻不足以判断就直说「新闻不足」，并降低 confidence，主要依据指数和净值。
-5. 输出纯 JSON，不要任何其他文字、不要 markdown。"""
+4. 止损必须给明确结论：浮亏达到 -20% 的票，按她的纪律必须建议减半，并给出股数和金额，不能因为「长期看好」回避；没触线的票不要主动劝割，除非新闻有明确个股利空，且要指出是哪条。
+5. 新闻不足以判断就直说「新闻不足」，并降低 confidence，主要依据指数和净值。
+6. 输出纯 JSON，不要任何其他文字、不要 markdown。"""
     prompt = f"""{context}
 
 ## 任务
-结合大盘、账户净值和新闻，判断：
-1) 市场是否企稳；2) 账户是否企稳；3) 今天能不能恢复买入或补仓。
+结合大盘、账户净值、持仓明细和新闻，判断：
+1) 市场是否企稳；2) 账户是否企稳；3) 今天能不能恢复买入或补仓；4) 该不该止损或减仓。
 
 输出 JSON：
 {{
@@ -1206,6 +1231,8 @@ def _ai_market_view():
   "reason": "综合理由 2-3 句，有新闻就引用新闻标题",
   "what_changes": "看到什么会改判，要具体可观察",
   "buy_permission": "可以恢复买入" 或 "只能小幅试买" 或 "继续暂停",
+  "stop_loss": "该止损" 或 "暂不止损" 或 "观察",
+  "stop_loss_note": "具体到哪只票、卖多少股、约多少钱；暂不止损就说清为什么，不超过 80 字",
   "evidence": ["引用的新闻标题，必须来自上面的列表，没有就空数组"]
 }}"""
 
@@ -1219,6 +1246,12 @@ def _ai_market_view():
         print(f"⚠️ 市场判断 JSON 解析失败: {e}\n{raw[:300]}")
         return _rule_market_view(snap, note="AI 返回格式异常，已退回规则判断。")
 
+    if not data.get("stop_loss"):
+        data["stop_loss"] = "该止损" if disc.get("red_lines") else "暂不止损"
+    if not data.get("stop_loss_note"):
+        data["stop_loss_note"] = (
+            "；".join(r.get("message", "") for r in disc.get("red_lines") or [])
+            or "没有持仓触发 -20% 红线，按纪律继续持有。")
     data["evidence"] = [x for x in (data.get("evidence") or []) if isinstance(x, str)][:4]
     blob = " ".join(str(data.get(k) or "") for k in
                     ("summary", "market_note", "account_note", "reason", "what_changes"))
