@@ -292,8 +292,8 @@ def _stabilize_status(t):
         return (f"现在已满足企稳条件：{t['trough_date']} 见低点后已过 {t['days_since_low']} 个净值日没创新低，"
                 f"并且回升 {t['rebound_pct']:+.1f}%（≥2%）。")
     if t["days_since_low"] == 0:
-        return (f"今天（{t['trough_date']}）就是这轮低点，还没有「连续 3 个净值日不创新低」，"
-                f"也没有「回升 2%」，所以现在没企稳，继续等。")
+        return (f"最新净值日（{t['trough_date']}）就是这轮低点，还没有「连续 3 个净值日不创新低」，"
+                f"也没有「回升 2%」，所以现在没企稳，继续等，等今天收盘后的净值再看。")
     return (f"现在还没满足：{t['trough_date']} 见低点后只过了 {t['days_since_low']} 个净值日"
             f"（要连续 3 个不创新低），净值较低点回升 {t['rebound_pct']:+.1f}%（要 ≥2%）。"
             f"所以现在要继续等，不抄底。")
