@@ -518,8 +518,8 @@ def chat_stream(messages, search_enabled=True):
 
 # ============ API 处理 ============
 
-def _fetch_prev_closes():
-    """从腾讯 API 获取所有股票的昨收价"""
+def _fetch_prev_closes(force=False):
+    """昨收价：优先用刷新时落盘的缓存，避免每次打开页面都请求腾讯"""
     import urllib.request
     holdings = agent.load_portfolio()
     codes = {}
@@ -531,6 +531,9 @@ def _fetch_prev_closes():
             codes[name] = code
     if not codes:
         return {}
+    cached = agent.load_prev_closes()
+    if not force and cached and all(name in cached for name in codes):
+        return cached
     tdx_codes = []
     code_to_name = {}
     for name, code in codes.items():
@@ -561,7 +564,9 @@ def _fetch_prev_closes():
                         pass
     except Exception:
         pass
-    return prev_closes
+    merged = {**cached, **prev_closes}
+    agent.save_prev_closes(merged)
+    return merged
 
 
 LAST_REFRESH_FILE = DATA_DIR / ".last_refresh"
@@ -656,7 +661,10 @@ def api_data():
     )
 
     realized_pnl = agent.get_realized_pnl_total()
-    unrealized_pnl = total_pnl - realized_pnl
+    ledger_realized = agent.get_ledger_realized_total()
+    dividend_total = agent.get_corporate_action_total()
+    unrealized_pnl = round(sum(
+        (h.get("盈亏") or 0) for h in holdings if h["类别"] in ("股票", "黄金")), 2)
     gold_sold_total = agent.get_gold_sold_total()
 
     # 已清仓股票（持股数=0）
@@ -669,6 +677,8 @@ def api_data():
         "total_pnl": total_pnl,
         "unrealized_pnl": unrealized_pnl,
         "realized_pnl": realized_pnl,
+        "ledger_realized": ledger_realized,
+        "dividend_total": dividend_total,
         "gold_sold_total": gold_sold_total,
         "total_return_pct": round(total_pnl / (total_value - total_pnl) * 100, 2) if (total_value - total_pnl) > 0 else 0,
         "net_capital": net_capital,
@@ -687,6 +697,8 @@ def api_refresh():
     """刷新行情并返回更新后的数据"""
     holdings = agent.load_portfolio()
     prices, prev_closes, failed = agent.fetch_prices()
+    if prev_closes:
+        agent.save_prev_closes({**agent.load_prev_closes(), **prev_closes})
     if prices:
         holdings = agent.update_holdings_with_prices(holdings, prices, prev_closes)
         agent.save_prices(holdings)
@@ -1419,6 +1431,64 @@ def api_briefing(force=False):
             "cached": False, "snapshot": snap}
 
 
+def _invalidate_ai_cache():
+    """持仓变化后，旧的 AI 市场判断和当日晨报必须作废"""
+    from openpyxl import load_workbook
+    wb = load_workbook(agent.EXCEL_PATH)
+    changed = False
+    if "市场判断" in wb.sheetnames:
+        ws = wb["市场判断"]
+        if ws.max_row > 1:
+            ws.delete_rows(2, ws.max_row - 1)
+            changed = True
+    if "晨报" in wb.sheetnames:
+        ws = wb["晨报"]
+        today = datetime.now().strftime("%Y-%m-%d")
+        for r in range(ws.max_row, 1, -1):
+            if str(ws.cell(r, 1).value)[:10] == today:
+                ws.delete_rows(r)
+                changed = True
+    if changed:
+        wb.save(agent.EXCEL_PATH)
+    wb.close()
+
+
+def api_import_statement(data):
+    """导入券商对账单：前端把 PDF 转成 base64 传上来，落临时文件后解析"""
+    import base64
+    import tempfile
+    from statement_import import import_statement
+
+    raw = str(data.get("content_b64") or "")
+    if not raw:
+        raise ValueError("请选择对账单 PDF")
+    try:
+        blob = base64.b64decode(raw.split(",", 1)[-1])
+    except Exception:
+        raise ValueError("PDF 数据损坏，请重新选择文件")
+    if not blob.startswith(b"%PDF"):
+        raise ValueError("不是有效的 PDF 文件")
+    password = str(data.get("password") or "")
+    if not password:
+        raise ValueError("请填写 PDF 密码")
+    dry = bool(data.get("dry_run"))
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(blob)
+            tmp_path = tmp.name
+        result = import_statement(tmp_path, password, str(agent.EXCEL_PATH), dry_run=dry)
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+    if not dry:
+        _invalidate_ai_cache()
+    return result
+
+
 def api_decisions():
     rows = insights.load_decisions()
     price_map = {h["名称"]: h["现价"] for h in agent.load_portfolio()}
@@ -1534,8 +1604,13 @@ class PortfolioHandler(BaseHTTPRequestHandler):
         elif path == "/api/realized-pnl":
             try:
                 records = agent.get_realized_pnl_records()
-                total = agent.get_realized_pnl_total()
-                self._send_json({"records": records, "total": total})
+                ledger_total = agent.get_ledger_realized_total()
+                self._send_json({
+                    "records": records,
+                    "total": round(sum(r["pnl"] for r in records), 2),
+                    "ledger_total": ledger_total,
+                    "grand_total": agent.get_realized_pnl_total(),
+                })
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
@@ -1549,6 +1624,15 @@ class PortfolioHandler(BaseHTTPRequestHandler):
         elif path == "/api/transactions":
             try:
                 self._send_json(agent.transaction_review())
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif path == "/api/corporate-actions":
+            try:
+                self._send_json({
+                    "actions": agent.load_corporate_actions(),
+                    "total": agent.get_corporate_action_total(),
+                })
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
@@ -1589,10 +1673,12 @@ class PortfolioHandler(BaseHTTPRequestHandler):
         _WRITE_PATHS = {
             "/api/holdings-save", "/api/realized-pnl", "/api/capital-flow",
             "/api/transactions", "/api/decisions", "/api/save-config", "/api/refresh",
+            "/api/corporate-actions", "/api/import-statement",
         }
         if path in _WRITE_PATHS:
             is_write = not (path == "/api/transactions" and data.get("action") == "preview")
-            destructive = data.get("action") in ("delete", "undo") or path == "/api/holdings-save"
+            destructive = (data.get("action") in ("delete", "undo")
+                           or path in ("/api/holdings-save", "/api/import-statement"))
             if is_write:
                 agent.auto_backup(path.strip("/").replace("/", "_"), force=destructive)
 
@@ -1805,6 +1891,42 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                     result.update(agent.transaction_review())
                     agent.sync_portfolio_to_github()
                     self._send_json(result)
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)}, 400)
+
+        elif path == "/api/corporate-actions":
+            try:
+                action = data.get("action", "create")
+                if action == "delete":
+                    if not data.get("confirm"):
+                        self._send_json({"success": False, "error": "删除需要二次确认"}, 400)
+                        return
+                    ok = agent.delete_corporate_action(int(data["row"]))
+                else:
+                    if not str(data.get("name", "")).strip():
+                        self._send_json({"success": False, "error": "请填写名称"})
+                        return
+                    amount = float(data.get("amount", 0) or 0)
+                    if amount == 0:
+                        self._send_json({"success": False, "error": "请填写金额（红利税填负数）"})
+                        return
+                    ok = agent.add_corporate_action(
+                        data.get("date") or datetime.now().strftime("%Y-%m-%d"),
+                        str(data.get("code", "")).strip(), str(data.get("name", "")).strip(),
+                        data.get("type") or "现金分红", amount, data.get("note", ""))
+                self._send_json({
+                    "success": ok,
+                    "actions": agent.load_corporate_actions(),
+                    "total": agent.get_corporate_action_total(),
+                })
+            except Exception as e:
+                self._send_json({"success": False, "error": str(e)}, 400)
+
+        elif path == "/api/import-statement":
+            try:
+                result = api_import_statement(data)
+                result = {k: v for k, v in result.items() if k not in ("state", "final")}
+                self._send_json({"success": True, **result})
             except Exception as e:
                 self._send_json({"success": False, "error": str(e)}, 400)
 

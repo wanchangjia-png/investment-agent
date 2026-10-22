@@ -156,27 +156,46 @@ def performance():
 def attribution():
     holdings = agent.load_portfolio()
     realized = defaultdict(float)
-    for r in agent.get_realized_pnl_records():
+    for t in agent.load_transactions():
+        if t["direction"] == "卖出" and t["realized"] is not None:
+            realized[t["name"]] += t["realized"]
+    # 交易流水覆盖不到的老仓 / 账户二，用「已实现盈亏」补
+    for r in agent.get_legacy_realized_records():
         realized[r["name"]] += _num(r["pnl"])
 
+    dividends = defaultdict(float)
+    for a in agent.load_corporate_actions():
+        if a["type"] in agent.CASH_ACTION_TYPES:
+            dividends[a["name"] or "利息/调账"] += _num(a["amount"])
+
     items = {}
+    active = set()
     for h in holdings:
         if h["类别"] != "股票":
             continue
         name = h["名称"]
         items.setdefault(name, {"name": name, "sector": agent.SECTOR_MAP.get(name, "其他"),
-                                "unrealized": 0.0, "realized": 0.0, "market_value": 0.0})
+                                "unrealized": 0.0, "realized": 0.0, "dividend": 0.0,
+                                "market_value": 0.0})
         items[name]["unrealized"] += _num(h["盈亏"])
         items[name]["market_value"] += _num(h["市值"])
+        if _num(h["数量"]) > 0:
+            active.add(name)
     for name, pnl in realized.items():
         items.setdefault(name, {"name": name, "sector": agent.SECTOR_MAP.get(name, "其他"),
-                                "unrealized": 0.0, "realized": 0.0, "market_value": 0.0})
+                                "unrealized": 0.0, "realized": 0.0, "dividend": 0.0,
+                                "market_value": 0.0})
         items[name]["realized"] += pnl
+    for name, amt in dividends.items():
+        items.setdefault(name, {"name": name, "sector": "现金",
+                                "unrealized": 0.0, "realized": 0.0, "dividend": 0.0,
+                                "market_value": 0.0})
+        items[name]["dividend"] += amt
 
     gold_unrealized = sum(_num(h["盈亏"]) for h in holdings if h["类别"] == "黄金")
     rows = []
     for it in items.values():
-        total = it["unrealized"] + it["realized"]
+        total = it["unrealized"] + it["realized"] + it["dividend"]
         if abs(total) < 0.01:
             continue
         rows.append({
@@ -184,13 +203,17 @@ def attribution():
             "sector": it["sector"],
             "unrealized": round(it["unrealized"], 2),
             "realized": round(it["realized"], 2),
+            "dividend": round(it["dividend"], 2),
             "pnl": round(total, 2),
             "market_value": round(it["market_value"], 2),
+            "cleared": (it["name"] not in active and it["market_value"] == 0
+                        and abs(it["realized"]) > 0.01),
         })
     if abs(gold_unrealized) >= 0.01:
         rows.append({"name": "黄金", "sector": "黄金", "unrealized": round(gold_unrealized, 2),
-                     "realized": 0.0, "pnl": round(gold_unrealized, 2),
-                     "market_value": round(sum(_num(h["市值"]) for h in holdings if h["类别"] == "黄金"), 2)})
+                     "realized": 0.0, "dividend": 0.0, "pnl": round(gold_unrealized, 2),
+                     "market_value": round(sum(_num(h["市值"]) for h in holdings if h["类别"] == "黄金"), 2),
+                     "cleared": False})
 
     total = sum(r["pnl"] for r in rows)
     denom = abs(total) if abs(total) > 1 else 1
@@ -198,6 +221,70 @@ def attribution():
         r["share"] = round(r["pnl"] / denom * 100, 1)
     rows.sort(key=lambda r: r["pnl"])
     return {"items": rows, "total": round(total, 2)}
+
+
+def opportunity_cost():
+    """机会成本：每只持仓从首次买入至今，与同期沪深300比较"""
+    holdings = [h for h in agent.load_portfolio()
+                if h["类别"] == "股票" and _num(h["数量"]) > 0]
+    if not holdings:
+        return {"items": [], "summary": {}}
+
+    first_buy = {}
+    for t in sorted(agent.load_transactions(), key=lambda x: x["date"]):
+        if t["direction"] == "买入" and t["name"] not in first_buy and t["price"]:
+            first_buy[t["name"]] = {"date": t["date"][:10], "price": t["price"]}
+
+    index = fetch_index_history(240)
+    dates = sorted(index)
+    if not dates:
+        return {"items": [], "summary": {"error": "沪深300行情不可用"}}
+
+    bench_now = index[dates[-1]]
+    items = []
+    for h in holdings:
+        fb = first_buy.get(h["名称"])
+        price, qty, cost = _num(h["现价"]), _num(h["数量"]), _num(h["成本价"])
+        if not fb or not price:
+            continue
+        bench_start_date = next((d for d in dates if d >= fb["date"]), None)
+        if not bench_start_date or not index[bench_start_date]:
+            continue
+        stock_ret = (price / fb["price"] - 1) * 100
+        bench_ret = (bench_now / index[bench_start_date] - 1) * 100
+        mv = price * qty
+        gap_pct = stock_ret - bench_ret
+        items.append({
+            "name": h["名称"],
+            "start": fb["date"],
+            "days": (datetime.now() - datetime.strptime(fb["date"], "%Y-%m-%d")).days,
+            "first_price": round(fb["price"], 3),
+            "price": round(price, 3),
+            "cost": round(cost, 3),
+            "market_value": round(mv, 2),
+            "stock_ret": round(stock_ret, 2),
+            "bench_ret": round(bench_ret, 2),
+            "gap_pct": round(gap_pct, 2),
+            "opportunity": round(mv * gap_pct / 100, 0),
+        })
+
+    if not items:
+        return {"items": [], "summary": {}}
+    items.sort(key=lambda x: x["opportunity"])
+    total_mv = sum(i["market_value"] for i in items)
+    weighted_stock = sum(i["stock_ret"] * i["market_value"] for i in items) / total_mv if total_mv else 0
+    weighted_bench = sum(i["bench_ret"] * i["market_value"] for i in items) / total_mv if total_mv else 0
+    return {
+        "items": items,
+        "summary": {
+            "stock_ret": round(weighted_stock, 2),
+            "bench_ret": round(weighted_bench, 2),
+            "gap_pct": round(weighted_stock - weighted_bench, 2),
+            "opportunity": round(sum(i["opportunity"] for i in items), 0),
+            "since": min(i["start"] for i in items),
+            "benchmark": BENCHMARK_NAME,
+        },
+    }
 
 
 # ============ 行业与集中度 ============
@@ -1071,6 +1158,7 @@ def snapshot(stocks=None):
         "discipline": discipline(perf, exp),
         "market": market_snapshot(),
         "structure": structure_advice(exp),
+        "opportunity": opportunity_cost(),
     }
     snap["verdict"] = verdict(snap)
     return snap
@@ -1134,8 +1222,8 @@ def add_decision(data):
             _num(data.get("price")) or None,
             _num(data.get("target")) or None,
             data.get("reason", ""),
-            "待执行",
-            "",
+            data.get("status") or "待执行",
+            data.get("review", ""),
         ])
         wb.save(agent.EXCEL_PATH)
         wb.close()

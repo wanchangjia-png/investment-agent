@@ -7,3 +7,5 @@ dashboard.html
 dashboard.py
 create_portfolio.py
 .last_refresh
+prev_close.json
+backups/

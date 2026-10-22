@@ -13,6 +13,7 @@
 """
 import sys
 import os
+import json
 import shutil
 import time
 from datetime import datetime, timezone, timedelta
@@ -548,8 +549,46 @@ def get_gold_sold_total():
     return round(total, 2)
 
 
+def get_legacy_realized_records():
+    """「已实现盈亏」sheet 里没有被交易流水覆盖的记录（老仓、账户二）。
+
+    同一笔卖出在两处登记时日期可能差几天（如曙26转债），按名称 ±5 天去重。
+    """
+    covered = {}
+    for t in load_transactions():
+        if t["direction"] != "卖出" or t["realized"] is None:
+            continue
+        try:
+            d = datetime.strptime(t["date"][:10], "%Y-%m-%d")
+        except ValueError:
+            continue
+        covered.setdefault(t["name"], []).append(d)
+
+    kept = []
+    for r in get_realized_pnl_records():
+        try:
+            d = datetime.strptime(r["date"][:10], "%Y-%m-%d")
+        except ValueError:
+            kept.append(r)
+            continue
+        if any(abs((d - c).days) <= 5 for c in covered.get(r["name"], [])):
+            continue
+        kept.append(r)
+    return kept
+
+
+def get_ledger_realized_total():
+    """交易流水里所有卖出的实现盈亏合计（真实滚动成本口径）"""
+    return round(sum(t["realized"] for t in load_transactions()
+                     if t["direction"] == "卖出" and t["realized"] is not None), 2)
+
+
 def get_realized_pnl_total():
-    """获取累计已实现盈亏总额"""
+    """累计已实现盈亏：交易流水优先，未被流水覆盖的老记录补上"""
+    ledger = get_ledger_realized_total()
+    legacy = sum(r["pnl"] for r in get_legacy_realized_records())
+    if ledger or legacy:
+        return round(ledger + legacy, 2)
     try:
         wb = openpyxl.load_workbook(EXCEL_PATH)
         if "已实现盈亏" not in wb.sheetnames:
@@ -564,6 +603,82 @@ def get_realized_pnl_total():
         return round(total, 2)
     except Exception:
         return 0
+
+
+CORPORATE_SHEET = "公司行为"
+CASH_ACTION_TYPES = {"现金分红", "红利税", "利息", "现金调账"}
+
+
+def load_corporate_actions():
+    """读取分红、红利税、利息等公司行为"""
+    try:
+        wb = openpyxl.load_workbook(EXCEL_PATH, data_only=True)
+        if CORPORATE_SHEET not in wb.sheetnames:
+            wb.close()
+            return []
+        ws = wb[CORPORATE_SHEET]
+        rows = []
+        for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+            if not row or not row[0]:
+                continue
+            rows.append({
+                "row": i,
+                "date": str(row[0])[:10],
+                "code": str(row[1] or ""),
+                "name": row[2] or "",
+                "type": row[3] or "",
+                "amount": float(row[4] or 0),
+                "qty": float(row[5] or 0),
+                "per_share": float(row[6] or 0),
+                "note": row[7] or "",
+                "source": row[8] or "",
+            })
+        wb.close()
+        rows.reverse()
+        return rows
+    except Exception as e:
+        print(f"⚠️ 读取公司行为失败: {e}")
+        return []
+
+
+def get_corporate_action_total():
+    """公司行为对现金的净影响（分红为正、红利税为负）"""
+    return round(sum(a["amount"] for a in load_corporate_actions()
+                     if a["type"] in CASH_ACTION_TYPES), 2)
+
+
+def add_corporate_action(date, code, name, action_type, amount, note=""):
+    try:
+        wb = openpyxl.load_workbook(EXCEL_PATH)
+        if CORPORATE_SHEET not in wb.sheetnames:
+            ws = wb.create_sheet(CORPORATE_SHEET)
+            ws.append(["日期", "代码", "名称", "类型", "金额", "数量", "每股金额", "说明", "来源"])
+        else:
+            ws = wb[CORPORATE_SHEET]
+        ws.append([date, code, name, action_type, round(float(amount), 2), None, None,
+                   note or "手工记录", "手工"])
+        wb.save(EXCEL_PATH)
+        wb.close()
+        return True
+    except Exception as e:
+        print(f"⚠️ 记录公司行为失败: {e}")
+        return False
+
+
+def delete_corporate_action(row_num):
+    try:
+        wb = openpyxl.load_workbook(EXCEL_PATH)
+        ws = wb[CORPORATE_SHEET]
+        if ws.cell(row_num, 1).value is None:
+            wb.close()
+            return False
+        ws.delete_rows(row_num)
+        wb.save(EXCEL_PATH)
+        wb.close()
+        return True
+    except Exception as e:
+        print(f"⚠️ 删除公司行为失败: {e}")
+        return False
 
 
 def get_realized_pnl_records():
@@ -1284,6 +1399,37 @@ def get_net_capital():
 # 接口: http://qt.gtimg.cn/q=sz000858,sz002850,...
 # 返回格式: v_sz000858="...~name~price~...";
 
+PREV_CLOSE_FILE = DATA_DIR / "prev_close.json"
+
+
+def load_prev_closes():
+    """读取刷新时落盘的昨收价；不是今天的就作废，避免跨日算错今日盈亏"""
+    try:
+        data = json.loads(PREV_CLOSE_FILE.read_text(encoding="utf-8"))
+        if data.get("date") != datetime.now(BEIJING_TZ).strftime("%Y-%m-%d"):
+            return {}
+        values = data.get("by_name") or {}
+        return {k: float(v) for k, v in values.items() if v}
+    except Exception:
+        return {}
+
+
+def save_prev_closes(prev_closes):
+    if not prev_closes:
+        return
+    try:
+        payload = {
+            "date": datetime.now(BEIJING_TZ).strftime("%Y-%m-%d"),
+            "time": datetime.now(BEIJING_TZ).strftime("%H:%M:%S"),
+            "by_name": {k: round(float(v), 4) for k, v in prev_closes.items() if v},
+        }
+        tmp = PREV_CLOSE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, PREV_CLOSE_FILE)
+    except Exception as e:
+        print(f"⚠️ 昨收价落盘失败: {e}")
+
+
 PREFIXES = {"sh", "sz", "bj"}  # 腾讯API支持的交易所前缀
 
 def _code_variants(code):
@@ -1437,9 +1583,9 @@ def calculate(holdings):
             total_market_value += mv
             total_pnl += pnl
 
-    # 加上已实现盈亏
+    # 加上已实现盈亏与分红等公司行为
     realized = get_realized_pnl_total()
-    total_pnl += realized
+    total_pnl += realized + get_corporate_action_total()
 
     # 按账户汇总
     accounts = {}

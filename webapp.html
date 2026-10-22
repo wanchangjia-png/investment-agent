@@ -169,6 +169,8 @@ tr:hover { background: #f8f9ff; }
     border-radius: 7px; font-size: 12.5px; font-family: inherit; }
 .status-pill { font-size: 11px; padding: 1px 7px; border-radius: 8px; background: #f0f0f0; color: #666; }
 .status-done { background: #eef7ee; color: #2E7D32; }
+.status-skip { background: #fff4e5; color: #A67C00; }
+.cleared-tag { font-size: 10px; color: #fff; background: #b0b0b0; border-radius: 3px; padding: 1px 4px; margin-left: 3px; vertical-align: middle; }
 
 .verdict-card { border-radius: 14px; padding: 18px 20px; margin-bottom: 14px; border: 1px solid #e8ecf5;
     background: linear-gradient(135deg, #f8fafc, #eef3fb); }
@@ -526,6 +528,10 @@ tr:hover { background: #f8f9ff; }
                         <div id="sectorList"><div style="font-size:12px;color:#999;">加载中…</div></div>
                     </div>
                 </div>
+                <div class="panel" style="margin-top:14px;">
+                    <h4>⏱ 机会成本：同期如果买沪深300</h4>
+                    <div id="opportunityBox"><div style="font-size:12px;color:#999;">加载中…</div></div>
+                </div>
             </div>
 
             <div class="tab-content" id="tabHistory"><div class="history-table" id="historyContainer"></div>
@@ -535,6 +541,7 @@ tr:hover { background: #f8f9ff; }
             <div class="tab-content" id="tabTransactions">
                 <div class="holdings-toolbar">
                     <button class="btn btn-sm btn-outline" onclick="undoLastTransaction()">↩️ 撤销上一笔</button>
+                    <button class="btn btn-sm btn-primary" onclick="showStatementImport()">📥 导入对账单</button>
                     <span style="font-size:12px;color:#888;">只撤销最后一笔手工交易；对账单导入的流水不能单笔撤销</span>
                 </div>
                 <div class="metric-row" id="txnMetrics"></div>
@@ -554,7 +561,25 @@ tr:hover { background: #f8f9ff; }
                         <div id="txnEmpty" class="empty-state" style="display:none;"><div class="icon">📝</div><div>从「持仓 → 记一笔交易」开始</div></div>
                     </div>
                 </div>
-                <p style="font-size:12px;color:#999;margin-top:12px;">实现盈亏按真实成本计算，与持仓页的摊薄成本口径不同；只统计卖出。</p>
+                <div class="panel" style="margin-top:14px;">
+                    <h4>💰 分红 / 红利税 / 利息</h4>
+                    <div class="holdings-toolbar" style="margin-bottom:8px;gap:6px;flex-wrap:wrap;">
+                        <input type="date" id="caDate" style="padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;">
+                        <select id="caType" style="padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;">
+                            <option>现金分红</option><option>红利税</option><option>利息</option>
+                        </select>
+                        <input id="caName" list="stockOptions" placeholder="名称" style="width:110px;padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;">
+                        <input id="caAmount" type="number" step="0.01" placeholder="金额（税填负数）" style="width:140px;padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;">
+                        <input id="caNote" placeholder="说明（可选）" style="width:130px;padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;">
+                        <button class="btn btn-sm btn-outline" onclick="addCorporateAction()">记录</button>
+                        <span id="caTotal" style="font-size:12px;color:#888;"></span>
+                    </div>
+                    <div class="table-wrap" style="max-height:260px;"><table><thead><tr>
+                        <th>日期</th><th>名称</th><th>类型</th><th class="num">金额</th><th>来源</th><th>操作</th>
+                    </tr></thead><tbody id="caBody"></tbody></table></div>
+                    <div id="caEmpty" class="empty-state" style="display:none;"><div class="icon">💰</div><div>暂无分红记录</div></div>
+                </div>
+                <p style="font-size:12px;color:#999;margin-top:12px;">实现盈亏按真实成本计算，与持仓页的摊薄成本口径不同；只统计卖出。分红按金额计入累计盈亏。</p>
             </div>
 
             <div class="tab-content" id="tabBreakeven">
@@ -727,6 +752,26 @@ tr:hover { background: #f8f9ff; }
     </div>
 </div>
 
+<!-- 导入券商对账单 -->
+<div class="modal-overlay" id="statementModal">
+    <div class="modal" style="width:560px;max-width:95vw;max-height:90vh;overflow-y:auto;">
+        <button class="close-btn" onclick="hideStatementImport()">&times;</button>
+        <h2>📥 导入券商对账单</h2>
+        <p style="font-size:12px;color:#888;margin-bottom:14px;">
+            支持东方财富「股票明细对账单」PDF。重复导入同一份对账单会先清掉上次导入的流水，不会重复记账。
+        </p>
+        <div class="field"><label>对账单 PDF</label><input type="file" id="stmtFile" accept="application/pdf,application/octet-stream"></div>
+        <div class="field"><label>PDF 密码</label><input type="password" id="stmtPassword" placeholder="开户时设置的查询密码"></div>
+        <div id="stmtError" style="color:#CC0000;font-size:13px;margin-top:6px;display:none;"></div>
+        <div id="stmtResult" style="font-size:12px;color:#555;line-height:1.7;margin-top:10px;"></div>
+        <div class="modal-actions">
+            <button class="btn btn-outline" onclick="hideStatementImport()">取消</button>
+            <button class="btn btn-outline" id="stmtPreviewBtn" onclick="importStatement(true)">先预览</button>
+            <button class="btn btn-primary" id="stmtImportBtn" onclick="importStatement(false)">确认导入</button>
+        </div>
+    </div>
+</div>
+
 <!-- 补仓算账弹窗 -->
 <div class="modal-overlay" id="addCheckModal">
     <div class="modal" style="width:560px;max-width:95vw;max-height:90vh;overflow-y:auto;">
@@ -853,7 +898,8 @@ tr:hover { background: #f8f9ff; }
                 <button class="btn btn-outline" id="rpCancelEdit" style="display:none;" onclick="cancelEditRealizedPnl()">取消编辑</button>
             </div>
         </div>
-        <div style="font-size:13px;color:#888;margin-bottom:8px;">累计清仓盈亏：<span id="rpTotal" style="font-weight:700;">--</span></div>
+        <div style="font-size:13px;color:#888;margin-bottom:4px;">手工清仓记录合计：<span id="rpTotal" style="font-weight:700;">--</span></div>
+        <div id="rpLedgerNote" style="font-size:12px;color:#888;margin-bottom:8px;"></div>
         <div style="max-height:280px;overflow-y:auto;" id="rpHistory">
             <div class="empty-state"><span class="spinner"></span> 加载中...</div>
         </div>
@@ -1234,7 +1280,7 @@ function switchTab(name, btn) {
     // 按需加载数据
     if (name === "breakeven") loadBreakeven();
     if (name === "cleared") renderCleared();
-    if (name === "transactions") loadTransactions();
+    if (name === "transactions") { loadTransactions(); loadCorporateActions(); }
     if (name === "today") { loadToday(); loadMarketView(); }
     if (name === "risks") loadInsights();
     if (name === "decisions") loadDecisions();
@@ -1762,6 +1808,12 @@ async function loadRealizedPnlHistory() {
         if (totalEl) {
             totalEl.textContent = (total >= 0 ? "+" : "") + total.toLocaleString();
             totalEl.style.color = total >= 0 ? "#CC0000" : "#009900";
+        }
+        const ledgerEl = document.getElementById("rpLedgerNote");
+        if (ledgerEl && data.ledger_total !== undefined) {
+            const lg = Number(data.ledger_total), grand = Number(data.grand_total);
+            ledgerEl.innerHTML = `交易流水已实现 <b style="color:${lg >= 0 ? '#CC0000' : '#009900'}">${lg >= 0 ? "+" : ""}${lg.toLocaleString()}</b>；
+                合并老仓/账户二后累计 <b style="color:${grand >= 0 ? '#CC0000' : '#009900'}">${grand >= 0 ? "+" : ""}${grand.toLocaleString()}</b>（看板用这个数）`;
         }
         if (records.length === 0) {
             container.innerHTML = '<div style="text-align:center;color:#ccc;font-size:12px;padding:20px;">暂无清仓记录</div>';
@@ -2474,7 +2526,7 @@ function renderTodaySide(snap) {
     const maxAbs = Math.max(...losses.map(x => Math.abs(x.pnl)), 1);
     document.getElementById("lossAttribution").innerHTML = losses.length ? losses.map(x => `
         <div class="loss-row">
-            <span class="lname" title="${escapeHtml(x.name)}">${escapeHtml(x.name)}</span>
+            <span class="lname" title="${escapeHtml(x.name)}">${escapeHtml(x.name)}${x.cleared ? '<span class="cleared-tag">已清仓</span>' : ''}</span>
             <span class="ltrack"><span class="lfill" style="width:${Math.max(Math.abs(x.pnl) / maxAbs * 100, 4)}%"></span></span>
             <span class="lamt">${Math.round(x.pnl).toLocaleString()}</span>
             <span class="lshare">${x.share}%</span>
@@ -2526,10 +2578,16 @@ function renderDiscipline(snap) {
 
     const items = [];
     (d.take_profit || []).forEach(t => items.push(
-        `<div class="discipline-item take-profit">🎯 ${escapeHtml(t.message)}</div>`));
+        `<div class="discipline-item take-profit">🎯 ${escapeHtml(t.message)}<br>
+         <button class="btn btn-sm btn-outline" onclick='logDisciplineDecision("减仓", ${JSON.stringify(t.name)}, ${t.target_price}, ${JSON.stringify(t.message)}, "待执行")'>记为决策</button>
+         <button class="btn btn-sm btn-outline" onclick='logDisciplineDecision("减仓", ${JSON.stringify(t.name)}, ${t.target_price}, ${JSON.stringify(t.message)}, "不执行")'>不执行</button>
+         </div>`));
     (d.red_lines || []).forEach(r => items.push(
         `<div class="discipline-item red-line">⛔ ${escapeHtml(r.message)}<br>
-         <span class="muted">执行后这笔亏损就锁定了；不执行请到「决策」里记录理由，别默默拖。</span></div>`));
+         <span class="muted">执行后这笔亏损就锁定了；不执行请记录理由，别默默拖。</span><br>
+         <button class="btn btn-sm btn-outline" onclick='logDisciplineDecision("卖出", ${JSON.stringify(r.name)}, ${r.cut_price}, ${JSON.stringify(r.message)}, "待执行")'>记为决策</button>
+         <button class="btn btn-sm btn-outline" onclick='logDisciplineDecision("卖出", ${JSON.stringify(r.name)}, ${r.cut_price}, ${JSON.stringify(r.message)}, "不执行")'>不执行</button>
+         </div>`));
 
     const gold = d.gold;
     const tiers = d.gold_tiers || [];
@@ -2813,7 +2871,7 @@ function renderInsights(d) {
         chartAttr = new Chart(document.getElementById("attrChart"), {
             type: "bar",
             data: {
-                labels: items.map(x => x.name),
+                labels: items.map(x => x.name + (x.cleared ? "（已清仓）" : "")),
                 datasets: [{ label: "累计盈亏（元）", data: items.map(x => x.pnl),
                     backgroundColor: items.map(x => x.pnl >= 0 ? "rgba(204,0,0,0.75)" : "rgba(0,153,0,0.75)"),
                     borderRadius: 4 }],
@@ -2821,14 +2879,23 @@ function renderInsights(d) {
             options: {
                 indexAxis: "y", responsive: true, maintainAspectRatio: false, animation: {duration: 0},
                 plugins: { legend: {display: false},
-                    title: {display: true, text: "盈亏归因（含已实现）", font: {size: 12}},
-                    tooltip: {callbacks: {label: c => (c.raw >= 0 ? "+" : "") + c.raw.toLocaleString() + " 元"}} },
+                    title: {display: true, text: "盈亏归因（含已实现与分红）", font: {size: 12}},
+                    tooltip: {callbacks: {
+                        label: c => (c.raw >= 0 ? "+" : "") + c.raw.toLocaleString() + " 元",
+                        afterLabel: c => {
+                            const x = items[c.dataIndex] || {};
+                            return [`浮盈亏 ${Math.round(x.unrealized || 0).toLocaleString()}`,
+                                    `已实现 ${Math.round(x.realized || 0).toLocaleString()}`,
+                                    `分红 ${Math.round(x.dividend || 0).toLocaleString()}`];
+                        },
+                    }} },
                 scales: { x: {ticks: {font: {size: 10}}}, y: {ticks: {font: {size: 10}}} },
             },
         });
     }
 
     renderRisks(d.risks || []);
+    renderOpportunity(d.opportunity || {});
 
     const sectors = ((d.exposure || {}).sectors || []);
     document.getElementById("sectorList").innerHTML = sectors.map(s => `
@@ -2836,6 +2903,42 @@ function renderInsights(d) {
         <span class="track"><span class="fill" style="width:${Math.min(s.pct_total * 2.5, 100)}%"></span></span>
         <span class="pct">${s.pct_total.toFixed(1)}%</span></div>`).join("")
         || '<div style="font-size:12px;color:#999;">暂无数据</div>';
+}
+
+function renderOpportunity(d) {
+    const box = document.getElementById("opportunityBox");
+    if (!box) return;
+    const items = d.items || [];
+    if (!items.length) {
+        box.innerHTML = '<div style="font-size:12px;color:#999;">暂无可比数据（需要有交易流水且能取到沪深300行情）</div>';
+        return;
+    }
+    const s = d.summary || {};
+    const color = v => v >= 0 ? "#CC0000" : "#009900";
+    const signed = v => `${v >= 0 ? "+" : ""}${Number(v).toFixed(1)}%`;
+    box.innerHTML = `
+        <div style="font-size:12.5px;color:#555;margin-bottom:10px;">
+            自 ${escapeHtml(s.since || "")} 起，你的持仓加权收益
+            <b style="color:${color(s.stock_ret)}">${signed(s.stock_ret || 0)}</b>，
+            同期${escapeHtml(s.benchmark || "沪深300")} <b style="color:${color(s.bench_ret)}">${signed(s.bench_ret || 0)}</b>，
+            ${(s.gap_pct || 0) >= 0 ? "跑赢" : "跑输"}
+            <b style="color:${color(s.gap_pct)}">${Math.abs(s.gap_pct || 0).toFixed(1)}%</b>。
+            折算成钱：<b style="color:${color(s.opportunity || 0)}">${(s.opportunity || 0) >= 0 ? "比买指数多赚" : "比买指数少赚"} ${Math.abs(Math.round(s.opportunity || 0)).toLocaleString()} 元</b>
+        </div>
+        <div class="table-wrap"><table><thead><tr>
+            <th>名称</th><th>建仓日</th><th class="num">天数</th><th class="num">我的收益</th>
+            <th class="num">沪深300</th><th class="num">超额</th><th class="num">机会成本</th>
+        </tr></thead><tbody>
+        ${items.map(x => `<tr>
+            <td style="font-weight:500;">${escapeHtml(x.name)}</td>
+            <td style="font-size:11px;color:#888;">${escapeHtml(x.start)}</td>
+            <td class="num">${x.days}</td>
+            <td class="num" style="color:${color(x.stock_ret)}">${signed(x.stock_ret)}</td>
+            <td class="num" style="color:${color(x.bench_ret)}">${signed(x.bench_ret)}</td>
+            <td class="num" style="color:${color(x.gap_pct)}">${signed(x.gap_pct)}</td>
+            <td class="num" style="color:${color(x.opportunity)}">${x.opportunity >= 0 ? "多赚 " : "少赚 "}${Math.abs(Math.round(x.opportunity)).toLocaleString()}</td>
+        </tr>`).join("")}
+        </tbody></table></div>`;
 }
 
 // ============ 决策记录 ============
@@ -2857,6 +2960,7 @@ function renderDecisions() {
         const since = r.since_pct === null || r.since_pct === undefined ? "--"
             : `<span class="${r.since_pct >= 0 ? 'up' : 'down'}">${r.since_pct >= 0 ? '+' : ''}${r.since_pct.toFixed(1)}%</span>`;
         const done = r.status === "已执行" || r.status === "已复盘";
+        const skipped = r.status === "不执行";
         return `<tr>
             <td style="font-size:12px;color:#888;">${escapeHtml(r.date.slice(0, 10))}</td>
             <td><b>${escapeHtml(r.name)}</b></td>
@@ -2865,9 +2969,10 @@ function renderDecisions() {
             <td class="num">${r.current_price || "--"}</td>
             <td class="num">${since}</td>
             <td style="font-size:12px;color:#666;max-width:220px;">${escapeHtml(r.reason || "")}</td>
-            <td><span class="status-pill ${done ? 'status-done' : ''}">${escapeHtml(r.status || "待执行")}</span></td>
+            <td><span class="status-pill ${done ? 'status-done' : skipped ? 'status-skip' : ''}">${escapeHtml(r.status || "待执行")}</span></td>
             <td style="white-space:nowrap;">
-                <button class="btn btn-sm btn-outline" onclick="setDecision(${i},'已执行')">执行</button>
+                <button class="btn btn-sm btn-outline" onclick="setDecision(${i},'已执行')">已执行</button>
+                <button class="btn btn-sm btn-outline" onclick="setDecision(${i},'不执行')">不执行</button>
                 <button class="btn btn-sm btn-outline" onclick="reviewDecision(${i})">复盘</button>
                 <button class="btn btn-sm btn-outline" onclick="deleteDecision(${i})">删</button>
             </td></tr>`;
@@ -2903,9 +3008,28 @@ async function addDecision() {
     }
 }
 
+async function logDisciplineDecision(type, name, price, reason, status) {
+    const payload = {action: "create", type, name, price, reason, status};
+    if (status === "不执行") {
+        const why = prompt(`「${name}」不执行的理由（可留空）`, "");
+        if (why === null) return;
+        payload.review = why;
+    }
+    if (await postDecision(payload)) {
+        alert(`已记录到「决策」：${name} ${type}（${status === "不执行" ? "不执行" : "待执行"}）`);
+    }
+}
+
 async function setDecision(i, status) {
     const r = state.decisions[i];
-    if (r) await postDecision({action: "update", row: r.row, status});
+    if (!r) return;
+    const payload = {action: "update", row: r.row, status};
+    if (status === "不执行") {
+        const reason = prompt(`「${r.name}」不执行的理由（会记到复盘栏，可留空）`, r.review || "");
+        if (reason === null) return;
+        payload.review = reason;
+    }
+    await postDecision(payload);
 }
 
 async function reviewDecision(i) {
@@ -3191,6 +3315,148 @@ function renderTransactions(d) {
             <td class="num">${pnlHtml}</td>
         </tr>`;
     }).join("");
+}
+
+// ============ 对账单导入 ============
+function showStatementImport() {
+    document.getElementById("stmtError").style.display = "none";
+    document.getElementById("stmtResult").innerHTML = "";
+    document.getElementById("stmtFile").value = "";
+    document.getElementById("stmtPassword").value = "";
+    document.getElementById("statementModal").classList.add("show");
+}
+
+function hideStatementImport() {
+    document.getElementById("statementModal").classList.remove("show");
+}
+
+function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(",", 2)[1] || "");
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+}
+
+function renderStatementResult(d) {
+    const meta = d.meta || {};
+    const lines = [];
+    if (meta.query_range) lines.push(`查询区间：${escapeHtml(meta.query_range)}`);
+    if (meta.customer) lines.push(`客户：${escapeHtml(meta.customer)}`);
+    if (meta.total_assets) lines.push(`对账单总资产：${Number(meta.total_assets).toLocaleString()} 元`);
+    if (d.ledger) lines.push(`将写入 <b>${d.ledger.length}</b> 条交易流水（预览，尚未保存）`);
+    if (d.ledger_rows !== undefined) lines.push(`已写入 <b>${d.ledger_rows}</b> 条交易流水`);
+    if (d.corporate_actions !== undefined) lines.push(`已写入 <b>${d.corporate_actions}</b> 条分红/税务记录`);
+    if (d.cash !== undefined) lines.push(`账户一现金：<b>${Number(d.cash).toLocaleString()}</b> 元；股票市值：<b>${Number(d.stock_value).toLocaleString()}</b> 元`);
+    const warnings = d.warnings || [];
+    if (warnings.length) {
+        lines.push(`<span style="color:#A67C00;">⚠️ ${warnings.length} 条提示：</span>` +
+            warnings.slice(0, 5).map(w => `<div style="color:#A67C00;">· ${escapeHtml(w)}</div>`).join(""));
+    }
+    document.getElementById("stmtResult").innerHTML = lines.join("<br>") || "解析完成，没有可导入的记录。";
+}
+
+async function importStatement(dryRun) {
+    const errEl = document.getElementById("stmtError");
+    errEl.style.display = "none";
+    const file = document.getElementById("stmtFile").files[0];
+    const password = document.getElementById("stmtPassword").value.trim();
+    if (!file) { errEl.textContent = "请选择对账单 PDF"; errEl.style.display = "block"; return; }
+    if (!password) { errEl.textContent = "请填写 PDF 密码"; errEl.style.display = "block"; return; }
+    const previewBtn = document.getElementById("stmtPreviewBtn");
+    const importBtn = document.getElementById("stmtImportBtn");
+    previewBtn.disabled = importBtn.disabled = true;
+    document.getElementById("stmtResult").innerHTML = '<span class="spinner"></span> 正在解析 PDF…';
+    try {
+        const content_b64 = await fileToBase64(file);
+        const res = await fetch("/api/import-statement", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content_b64, password, dry_run: !!dryRun }),
+        });
+        const d = await res.json();
+        if (!d.success) throw new Error(d.error || "导入失败");
+        renderStatementResult(d);
+        if (!dryRun) {
+            loadData(); loadTransactions(); loadCorporateActions(); loadToday(); loadInsights();
+            setTimeout(() => { hideStatementImport(); alert(`导入完成：${d.ledger_rows} 条流水，${d.corporate_actions} 条分红记录`); }, 600);
+        }
+    } catch (e) {
+        document.getElementById("stmtResult").innerHTML = "";
+        errEl.textContent = e.message || String(e);
+        errEl.style.display = "block";
+    } finally {
+        previewBtn.disabled = importBtn.disabled = false;
+    }
+}
+
+// ============ 公司行为（分红 / 红利税 / 利息）============
+async function loadCorporateActions() {
+    try {
+        const res = await fetch("/api/corporate-actions");
+        renderCorporateActions(await res.json());
+    } catch (e) {
+        const body = document.getElementById("caBody");
+        if (body) body.innerHTML = "";
+    }
+}
+
+function renderCorporateActions(d) {
+    const rows = d.actions || [];
+    const total = Number(d.total || 0);
+    const totalEl = document.getElementById("caTotal");
+    if (totalEl) {
+        totalEl.innerHTML = `净额 <b style="color:${total >= 0 ? '#CC0000' : '#009900'}">${total >= 0 ? '+' : ''}${total.toLocaleString()}</b> 元`;
+    }
+    const body = document.getElementById("caBody");
+    body.innerHTML = rows.map((a, i) => `<tr>
+        <td style="font-size:11px;color:#888;">${escapeHtml(a.date)}</td>
+        <td>${escapeHtml(a.name || "—")}</td>
+        <td>${escapeHtml(a.type)}</td>
+        <td class="num" style="color:${a.amount >= 0 ? '#CC0000' : '#009900'}">${a.amount >= 0 ? '+' : ''}${Number(a.amount).toLocaleString()}</td>
+        <td style="font-size:11px;color:#999;">${escapeHtml(a.source || "")}</td>
+        <td><button class="btn btn-sm btn-outline" onclick="deleteCorporateAction(${i})">删</button></td>
+    </tr>`).join("");
+    document.getElementById("caEmpty").style.display = rows.length ? "none" : "block";
+    state.corporateActions = rows;
+}
+
+async function addCorporateAction() {
+    const type = document.getElementById("caType").value;
+    let amount = parseFloat(document.getElementById("caAmount").value);
+    if (!amount || isNaN(amount)) { alert("请填写金额"); return; }
+    if (type === "红利税" && amount > 0) amount = -amount;
+    const name = document.getElementById("caName").value.trim();
+    if (!name && type !== "利息") { alert("请填写名称"); return; }
+    const payload = {
+        action: "create",
+        date: document.getElementById("caDate").value || undefined,
+        type, amount,
+        name: name || "利息/调账",
+        note: document.getElementById("caNote").value.trim(),
+    };
+    const res = await fetch("/api/corporate-actions", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+    const d = await res.json();
+    if (!d.success) { alert(d.error || "记录失败"); return; }
+    ["caName", "caAmount", "caNote"].forEach(id => document.getElementById(id).value = "");
+    renderCorporateActions(d);
+    loadData();
+}
+
+async function deleteCorporateAction(i) {
+    const a = (state.corporateActions || [])[i];
+    if (!a || !confirm(`删除 ${a.date} ${a.name || ""} ${a.type} ${a.amount} 元？`)) return;
+    const res = await fetch("/api/corporate-actions", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete", row: a.row, confirm: true }),
+    });
+    const d = await res.json();
+    if (!d.success) { alert(d.error || "删除失败"); return; }
+    renderCorporateActions(d);
+    loadData();
 }
 
 // ============ 初始化 ============

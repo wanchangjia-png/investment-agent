@@ -238,10 +238,18 @@ def build_ledger(data):
     return rows, warnings, state
 
 
+LEDGER_HEADERS = ["日期", "方向", "资产类别", "资产名称", "代码", "成交数量",
+                  "成交价格", "成交金额", "账户", "备注", "费用", "实现盈亏",
+                  "成本价(复盘)", "结存数量", "结存成本"]
+
+
 def _upsert_transactions(ws, rows):
     # 旧版占位行是 A2:J2 合并单元格，不清掉会把首条流水写坏
     for rng in list(ws.merged_cells.ranges):
         ws.unmerge_cells(str(rng))
+    # 旧表头只有 A–J，补齐复盘列
+    for i, header in enumerate(LEDGER_HEADERS, 1):
+        ws.cell(1, i, header)
     # 清掉上次同一来源的导入，保证可重复执行
     for r in range(ws.max_row, 1, -1):
         note = str(ws.cell(r, 10).value or "")
@@ -357,6 +365,7 @@ def import_statement(pdf_path, password, excel_path="portfolio.xlsx", dry_run=Fa
     wb.save(excel_path)
     wb.close()
     return {
+        "meta": data["meta"],
         "ledger_rows": len(ledger), "corporate_actions": actions,
         "cash": cash_total, "stock_value": stock_total,
         "warnings": warnings, "final": state,
