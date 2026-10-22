@@ -114,13 +114,16 @@ tr:hover { background: #f8f9ff; }
 .chart-box { position: relative; height: 220px; }
 
 /* 风险卡片 */
-.risk-list { max-height: 350px; overflow-y: auto; }
+.risk-list { max-height: 640px; overflow-y: auto; }
 .risk-item { padding: 10px 14px; border-radius: 8px; margin-bottom: 8px; font-size: 13px; }
 .risk-high { background: #fff0f0; border-left: 4px solid #CC0000; }
 .risk-mid { background: #fffbe6; border-left: 4px solid #FFC000; }
 .risk-item .level { font-weight: 600; font-size: 12px; }
 .risk-item .issue { margin: 3px 0; }
-.risk-item .suggestion { color: #666; font-size: 12px; }
+.risk-item .suggestion { color: #666; font-size: 12px; font-weight: 600; }
+.risk-steps { margin: 8px 0 0; padding-left: 20px; color: #444; font-size: 12.5px; line-height: 1.65; }
+.risk-steps li { margin-bottom: 4px; }
+.risk-steps li:last-child { margin-bottom: 0; }
 
 /* ===== 今日 / 诊断 / 决策 ===== */
 .metric-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-bottom: 14px; }
@@ -178,6 +181,11 @@ tr:hover { background: #f8f9ff; }
     padding: 3px 9px; border-radius: 12px; color: #444; }
 .verdict-triggers { margin-top: 10px; font-size: 12.5px; color: #555; line-height: 1.7; }
 .verdict-triggers div { display: flex; gap: 6px; margin-top: 3px; }
+.verdict-glossary { margin-top: 12px; font-size: 12px; color: #555; }
+.verdict-glossary summary { cursor: pointer; color: #2F5496; font-weight: 600; }
+.glossary-item { background: rgba(255,255,255,.7); border: 1px solid rgba(0,0,0,.05); border-radius: 8px;
+    padding: 7px 10px; margin-top: 6px; line-height: 1.65; }
+.glossary-item b { color: #1a2b4a; }
 
 .loss-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin-bottom: 9px; }
 .loss-row .lname { width: 76px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -355,6 +363,10 @@ tr:hover { background: #f8f9ff; }
                     <div class="verdict-headline" id="verdictHeadline"><span class="spinner"></span> 正在判断今天该不该动手…</div>
                     <div class="verdict-reasons" id="verdictReasons"></div>
                     <div class="verdict-triggers" id="verdictTriggers"></div>
+                    <details class="verdict-glossary">
+                        <summary>这些词是什么意思？（净值企稳、1/3 仓位、试买 5%…）</summary>
+                        <div id="glossaryList"></div>
+                    </details>
                 </div>
 
                 <div class="metric-row" id="todayMetrics"></div>
@@ -2330,6 +2342,8 @@ function renderTodaySide(snap) {
         .map(r => `<span>${escapeHtml(r)}</span>`).join("");
     document.getElementById("verdictTriggers").innerHTML = (v.triggers || [])
         .map(t => `<div><span style="color:#2F5496;">→</span><span>${escapeHtml(t)}</span></div>`).join("");
+    document.getElementById("glossaryList").innerHTML = (snap.glossary || [])
+        .map(g => `<div class="glossary-item"><b>${escapeHtml(g.term)}</b>：${escapeHtml(g.meaning)}</div>`).join("");
 
     renderTodayMetrics(snap);
 
@@ -2371,9 +2385,12 @@ function renderRisks(rows) {
     const c = document.getElementById("risksContainer");
     c.innerHTML = rows.map(r => {
         const cls = r.level === "高" ? "risk-high" : r.level === "中" ? "risk-mid" : "";
+        const steps = (r.steps || []).length
+            ? `<ol class="risk-steps">${r.steps.map(s => `<li>${escapeHtml(s)}</li>`).join("")}</ol>`
+            : "";
         return `<div class="risk-item ${cls}"><div class="level">${r.level === "高" ? "🔴 高风险" : r.level === "中" ? "🟡 中风险" : "🟢 低风险"} · ${escapeHtml(r.title)}</div>
             <div class="issue">${escapeHtml(r.detail)}</div>
-            <div class="suggestion">→ ${escapeHtml(r.action)}</div></div>`;
+            <div class="suggestion">→ ${escapeHtml(r.action)}</div>${steps}</div>`;
     }).join("");
     document.getElementById("risksEmpty").style.display = rows.length ? "none" : "block";
 }

@@ -209,7 +209,10 @@ def exposure():
     sector_rows.sort(key=lambda x: -x["value"])
 
     positions = sorted(
-        [{"name": h["名称"], "value": _num(h["市值"]), "pct_total": round(_num(h["市值"]) / total_value * 100, 1) if total_value else 0,
+        [{"name": h["名称"], "value": _num(h["市值"]), "qty": int(_num(h["数量"])),
+          "price": round(_num(h["现价"]), 3), "cost": round(_num(h["成本价"]), 3),
+          "account": h["账户"], "sector": agent.SECTOR_MAP.get(h["名称"], "其他"),
+          "pct_total": round(_num(h["市值"]) / total_value * 100, 1) if total_value else 0,
           "return_pct": round(_num(h["收益率"]) * 100, 2)} for h in stock_holdings],
         key=lambda x: -x["value"],
     )
@@ -230,67 +233,264 @@ def exposure():
     }
 
 
+# ============ 可执行的数字与步骤 ============
+def _lots(shares):
+    """A 股一手 100 股，卖出股数向下取整到整手"""
+    shares = int(shares or 0)
+    if shares < 100:
+        return 0
+    return int(shares // 100) * 100
+
+
+def _sell_shares(p, amount):
+    """卖出 amount 元该持仓需要多少股"""
+    if not p.get("price"):
+        return 0
+    return min(_lots(amount / p["price"]), _lots(p.get("qty", 0)))
+
+
+def nav_trend(perf=None, window=20):
+    """用净值快照判断「企稳」：最近一段的低点后连续 3 个净值日不创新低，且回升 ≥2%。
+
+    用最近 window 个净值日找低点，而不是历史最低点——否则几个月前的老低点会让
+    「企稳」永远成立，掩盖当下还在创新低的事实。
+    """
+    perf = perf or performance()
+    pts = perf.get("points") or []
+    if len(pts) < 2:
+        return {"defined": False, "stabilized": False}
+    values = [(p["date"], p["account"]) for p in pts]
+    peak_i = max(range(len(values)), key=lambda i: values[i][1])
+    peak_date, peak_idx = values[peak_i]
+    cur_date, cur_idx = values[-1]
+
+    recent_start = max(0, len(values) - window)
+    recent = values[recent_start:]
+    low_i = min(range(len(recent)), key=lambda i: recent[i][1])
+    trough_date, trough_idx = recent[low_i]
+    days_since_low = len(recent) - 1 - low_i
+    rebound = (cur_idx / trough_idx - 1) * 100 if trough_idx else 0
+    return {
+        "defined": True,
+        "stabilized": days_since_low >= 3 and rebound >= 2,
+        "peak_date": peak_date,
+        "peak_index": round(peak_idx, 2),
+        "trough_date": trough_date,
+        "trough_index": round(trough_idx, 2),
+        "current_date": cur_date,
+        "current_index": round(cur_idx, 2),
+        "days_since_low": days_since_low,
+        "rebound_pct": round(rebound, 2),
+        "drawdown_pct": round((cur_idx / peak_idx - 1) * 100, 2) if peak_idx else 0,
+    }
+
+
+def _stabilize_status(t):
+    if not t.get("defined"):
+        return "净值快照不足，暂时无法判断企稳。"
+    if t["stabilized"]:
+        return (f"现在已满足企稳条件：{t['trough_date']} 见低点后已过 {t['days_since_low']} 个净值日没创新低，"
+                f"并且回升 {t['rebound_pct']:+.1f}%（≥2%）。")
+    if t["days_since_low"] == 0:
+        return (f"今天（{t['trough_date']}）就是这轮低点，还没有「连续 3 个净值日不创新低」，"
+                f"也没有「回升 2%」，所以现在没企稳，继续等。")
+    return (f"现在还没满足：{t['trough_date']} 见低点后只过了 {t['days_since_low']} 个净值日"
+            f"（要连续 3 个不创新低），净值较低点回升 {t['rebound_pct']:+.1f}%（要 ≥2%）。"
+            f"所以现在要继续等，不抄底。")
+
+
 # ============ 风险规则 ============
 def risks(perf=None, attr=None, exp=None):
     perf = perf or performance()
     exp = exp or exposure()
     rows = []
 
-    def add(level, title, detail, action, metric=""):
-        rows.append({"level": level, "title": title, "detail": detail, "action": action, "metric": metric})
+    def add(level, title, detail, action, metric="", steps=None):
+        rows.append({"level": level, "title": title, "detail": detail, "action": action,
+                     "metric": metric, "steps": steps or []})
 
     m = perf.get("metrics", {})
-    if m.get("max_drawdown", 0) <= -12:
-        add("高", "回撤超过 12%", f"自净值高点最大回撤 {m['max_drawdown']:.1f}%，已进入深度回撤区间。",
-            "先控制仓位，暂停加仓，等净值企稳再恢复。", f"{m['max_drawdown']:.1f}%")
-    elif m.get("max_drawdown", 0) <= -8:
-        add("中", "回撤偏大", f"最大回撤 {m['max_drawdown']:.1f}%，超过 8% 的警戒线。",
-            "检查亏损最大的两只持仓，设定反弹减仓价位。", f"{m['max_drawdown']:.1f}%")
+    total = exp.get("total_value", 0)
+    trend = nav_trend(perf)
+    dd = m.get("max_drawdown", 0)
+
+    if dd <= -12 or dd <= -8:
+        level = "高" if dd <= -12 else "中"
+        budget = total * 0.05
+        steps = [
+            "暂停买入：不补仓、不定投、不因为跌得多就加仓；已经持有的先不动也可以，重点是别把现金买进去。",
+            "「净值企稳」的标准：从这轮低点开始，连续 3 个净值日（每个交易日收盘后记录的净值快照）都不创新低，"
+            "并且最新净值比低点高 2% 以上。两个条件同时满足才算企稳。",
+            _stabilize_status(trend),
+            f"企稳之后：先拿不超过总资产 5%（约 {budget:,.0f} 元）试买，分 2-3 次、每次只买 1 只，"
+            "每次买完至少等 3 个净值日再决定下一步。没企稳就一直等。",
+        ]
+        detail = (f"历史最大回撤 {dd:.1f}%（{trend.get('peak_date', '高点')} 起算），"
+                  f"当前距高点 {trend.get('drawdown_pct', 0):+.1f}%。"
+                  f"最近 20 个净值日的低点在 {trend.get('trough_date', '—')}，"
+                  f"最新 {trend.get('current_date', '—')} 较低点 {trend.get('rebound_pct', 0):+.1f}%。")
+        add(level, "回撤超过 12%" if level == "高" else "回撤偏大", detail,
+            "暂停买入；净值连续 3 个净值日不创新低且回升 2% 后，再用总资产 5% 分 2-3 次试买。",
+            f"{dd:.1f}%", steps)
 
     if m.get("excess_return", 0) <= -10:
-        add("中", "明显跑输沪深300", f"同期账户 {m['account_return']:+.1f}%，沪深300 {m['benchmark_return']:+.1f}%，落后 {abs(m['excess_return']):.1f} 个百分点。",
-            "对照基准持仓，考虑用宽基 ETF 替代持续跑输的个股。", f"{m['excess_return']:+.1f}pp")
+        worst = [p for p in sorted(exp["positions"], key=lambda x: x["return_pct"]) if p["return_pct"] < 0][:2]
+        steps = ["先把跑输的标的列成「减仓清单」，不是今天就卖："]
+        for p in worst:
+            if p["cost"] > p["price"]:
+                rise = (p["cost"] / p["price"] - 1) * 100
+                steps.append(
+                    f"{p['name']}：浮亏 {p['return_pct']:.1f}%，现价 {p['price']:.2f}，成本 {p['cost']:.2f}。"
+                    f"回到成本价附近（还要涨 {rise:.1f}%）先减 1/3 ≈ {_lots(p['qty'] / 3)} 股；"
+                    f"不到这个价不主动割，继续拿着。")
+        steps.append(
+            "减出来的钱先放现金，等账户净值企稳（连续 3 个净值日不创新低 + 回升 2%）后，"
+            f"再考虑换成沪深300 这类宽基 ETF（第一次不超过总资产 5%，约 {total * 0.05:,.0f} 元）；"
+            "不要马上买回同类个股。")
+        add("中", "明显跑输沪深300",
+            f"同期账户 {m['account_return']:+.1f}%，沪深300 {m['benchmark_return']:+.1f}%，落后 {abs(m['excess_return']):.1f} 个百分点。",
+            "把跑输的标的列成减仓清单，反弹到成本附近减 1/3，钱先放现金。", f"{m['excess_return']:+.1f}pp", steps)
 
-    if exp["top1_pct"] > 20:
-        add("高", "单票集中度偏高", f"第一大持仓占总资产 {exp['top1_pct']:.1f}%，超过 20% 上限。",
-            "分批减到 15% 以内，避免单只股票决定整体盈亏。", f"{exp['top1_pct']:.1f}%")
-    elif exp["top3_pct"] > 45:
+    if exp["top1_pct"] > 20 and exp["positions"]:
+        p = exp["positions"][0]
+        target_value = total * 0.15
+        over = p["value"] - target_value
+        sell = _sell_shares(p, over)
+        if sell:
+            half = _lots(sell / 2) or sell
+            steps = [
+                f"{p['name']} 现价 {p['price']:.2f}，持有 {p['qty']} 股，市值 {p['value']:,.0f} 元，"
+                f"占总资产 {p['pct_total']:.1f}%（上限 20%，建议压到 15%）。",
+                f"压到 15%（{target_value:,.0f} 元）需要卖出约 {over:,.0f} 元，按现价约 {sell} 股。",
+                f"分 2 次卖：找反弹的一天先卖 {half} 股（约 {half * p['price']:,.0f} 元）；"
+                f"隔至少 1 个交易日，再卖剩下的 {sell - half} 股；不要在大跌当天一次性砸出。",
+                "卖出的钱先放现金，不马上换股，等净值企稳后再配置。",
+            ]
+            action = f"{p['name']} 分 2 次减 {sell} 股（约 {over:,.0f} 元），把占比从 {p['pct_total']:.1f}% 降到 15%。"
+        else:
+            steps = [f"{p['name']} 占总资产 {p['pct_total']:.1f}%，超出部分不足一手，暂不需要卖。"]
+            action = f"{p['name']} 占比 {p['pct_total']:.1f}%，超出部分不足一手，先不操作。"
+        add("高", "单票集中度偏高", f"第一大持仓 {p['name']} 占总资产 {p['pct_total']:.1f}%，超过 20% 上限。",
+            action, f"{exp['top1_pct']:.1f}%", steps)
+    elif exp["top3_pct"] > 45 and len(exp["positions"]) >= 3:
+        top3 = exp["positions"][:3]
+        over = sum(p["value"] for p in top3) - total * 0.40
+        p = top3[0]
+        sell = _sell_shares(p, over)
+        names = "、".join(f"{x['name']} {x['pct_total']:.1f}%" for x in top3)
+        steps = [
+            f"前三大持仓：{names}，合计 {exp['top3_pct']:.1f}%（目标 ≤40%）。",
+            (f"最直接的办法是从里面最大的 {p['name']} 减：卖 {sell} 股（约 {sell * p['price']:,.0f} 元），"
+             f"分 2 次，每次 {(sell // 2 // 100) * 100 or sell} 股，间隔至少 1 个交易日。") if sell else
+            "超出金额不足一手，暂时不用卖，新增资金不要再买这三只。",
+            "卖出的钱先放现金；以后新增资金优先买和现有行业不同的宽基或弱相关行业。",
+        ]
         add("中", "头部持仓过重", f"前三大持仓合计占总资产 {exp['top3_pct']:.1f}%。",
-            "把前三大持仓合计压到 40% 以下，增加行业分散。", f"{exp['top3_pct']:.1f}%")
+            f"把前三大压到 40% 以下：{p['name']} 减约 {sell} 股，分 2 次卖。", f"{exp['top3_pct']:.1f}%", steps)
 
     top_sector = exp["sectors"][0] if exp["sectors"] else None
     if top_sector and top_sector["pct_total"] > 30:
+        target_value = total * 0.25
+        over = top_sector["value"] - target_value
+        members = [p for p in exp["positions"] if p["sector"] == top_sector["sector"]]
+        p = max(members, key=lambda x: x["value"]) if members else None
+        sell = _sell_shares(p, over) if p else 0
+        steps = [
+            f"{top_sector['sector']} 合计 {top_sector['value']:,.0f} 元，占总资产 {top_sector['pct_total']:.1f}%（目标 ≤25%）。"
+            f"需要减少约 {over:,.0f} 元。",
+            (f"从该行业里最大的 {p['name']} 减 {sell} 股（约 {sell * p['price']:,.0f} 元），分 2 次卖。"
+             if sell else "超出金额不足一手，暂时不卖，新增资金不要再买这个行业。"),
+            "减出来的钱先放现金；新增资金优先买和该行业弱相关的品种（例如宽基指数），不要继续加同一行业。",
+        ]
         add("高", "行业过度集中", f"{top_sector['sector']} 占总资产 {top_sector['pct_total']:.1f}%，单一行业风险过高。",
-            "新增不同行业资产，把单一行业占比降到 25% 以下。", f"{top_sector['pct_total']:.1f}%")
+            f"把 {top_sector['sector']} 从 {top_sector['pct_total']:.1f}% 降到 25%：{p['name'] if p else ''} 减约 {sell} 股。",
+            f"{top_sector['pct_total']:.1f}%", steps)
     elif top_sector and top_sector["pct_stock"] > 45:
+        members = [p for p in exp["positions"] if p["sector"] == top_sector["sector"]]
+        others = [s["sector"] for s in exp["sectors"][1:4]]
+        steps = [
+            f"{top_sector['sector']} 占股票仓位 {top_sector['pct_stock']:.1f}%，股票部分过于集中。",
+            f"以后新增的股票资金不要再买这个行业；现在持有 {len(members)} 只："
+            + "、".join(f"{p['name']}（{p['return_pct']:+.1f}%）" for p in members) + "。",
+            f"要补行业，优先从和它弱相关的方向里选 1-2 个（现在已有：{'、'.join(others) or '—'}），"
+            f"单只新买入不超过总资产 5%（约 {total * 0.05:,.0f} 元）。",
+        ]
         add("中", "股票仓位行业集中", f"{top_sector['sector']} 占股票仓位 {top_sector['pct_stock']:.1f}%。",
-            "股票部分补充 1-2 个弱相关行业。", f"{top_sector['pct_stock']:.1f}%")
+            "新增资金不买该行业，补 1-2 个弱相关行业。", f"{top_sector['pct_stock']:.1f}%", steps)
 
     for p in exp["positions"]:
-        if p["return_pct"] <= -30:
-            add("高", f"{p['name']} 深度亏损", f"浮亏 {p['return_pct']:.1f}%，占总资产 {p['pct_total']:.1f}%。",
-                "设定 +10% / +20% 两档反弹减仓价，不被动等回本。", f"{p['return_pct']:.1f}%")
-        elif p["return_pct"] <= -20:
-            add("中", f"{p['name']} 亏损扩大", f"浮亏 {p['return_pct']:.1f}%，占总资产 {p['pct_total']:.1f}%。",
-                "检查基本面是否变化，设定止损或反弹减仓计划。", f"{p['return_pct']:.1f}%")
+        if p["return_pct"] <= -20 and p["price"] > 0:
+            level = "高" if p["return_pct"] <= -30 else "中"
+            q1, q2 = _lots(p["qty"] / 3), _lots(p["qty"] / 3)
+            p1, p2 = p["price"] * 1.10, p["price"] * 1.20
+            stop = p["price"] * 0.92
+            steps = [
+                f"{p['name']}：现价 {p['price']:.2f}，成本 {p['cost']:.2f}，浮亏 {p['return_pct']:.1f}%，"
+                f"持有 {p['qty']} 股，市值 {p['value']:,.0f} 元。",
+                f"第一档：反弹到 {p1:.2f}（较现价 +10%）卖 1/3 ≈ {q1} 股，约 {q1 * p1:,.0f} 元。",
+                f"第二档：反弹到 {p2:.2f}（较现价 +20%）再卖 1/3 ≈ {q2} 股，约 {q2 * p2:,.0f} 元。",
+                f"防守线：如果从现价再跌 8%（到 {stop:.2f}），且当天没有明确利好，就把剩余仓位减半，"
+                "避免亏损继续扩大。",
+                "两档都没到就持有，不补仓摊薄；不要因为「已经亏很多」就一把梭补。",
+            ]
+            add(level, f"{p['name']} 深度亏损" if level == "高" else f"{p['name']} 亏损扩大",
+                f"浮亏 {p['return_pct']:.1f}%，占总资产 {p['pct_total']:.1f}%。",
+                f"{p['name']}：反弹到 {p1:.2f} 减 1/3（{q1} 股），到 {p2:.2f} 再减 1/3；跌破 {stop:.2f} 剩余减半。",
+                f"{p['return_pct']:.1f}%", steps)
 
-    if exp["cash_pct"] < 5:
-        add("高", "现金缓冲不足", f"现金仅占总资产 {exp['cash_pct']:.1f}%，低于 5% 的应急底线。",
-            "至少留出 10% 现金，避免被动卖出。", f"{exp['cash_pct']:.1f}%")
-    elif exp["cash_pct"] < 10:
-        add("中", "现金偏少", f"现金占总资产 {exp['cash_pct']:.1f}%，低于建议的 10%。",
-            "后续反弹减仓时不要立刻回补，把现金补到 10%。", f"{exp['cash_pct']:.1f}%")
+    if exp["cash_pct"] < 10:
+        need = total * 0.10 - exp["cash"]
+        weakest = min([p for p in exp["positions"] if p["qty"] > 0] or [None],
+                      key=lambda x: x["return_pct"] if x else 0)
+        sell = _sell_shares(weakest, need) if weakest else 0
+        steps = [
+            f"现金 {exp['cash']:,.0f} 元，占总资产 {exp['cash_pct']:.1f}%（底线 5%，建议 10%）。",
+            f"把现金补到 10%（{total * 0.10:,.0f} 元）还需要 {max(need, 0):,.0f} 元。",
+            (f"从浮亏最大的 {weakest['name']} 卖 {sell} 股（约 {sell * weakest['price']:,.0f} 元）来补；"
+             "如果它已经深亏、不想割，就等反弹到 +10% 再卖。") if sell else
+            "持仓都不足一手，暂时卖不出，先用后续收入/分红补现金。",
+            "补出来的现金先放着，不要马上买回。",
+        ]
+        add("高" if exp["cash_pct"] < 5 else "中",
+            "现金缓冲不足" if exp["cash_pct"] < 5 else "现金偏少",
+            f"现金占总资产 {exp['cash_pct']:.1f}%，低于{'5% 的应急底线' if exp['cash_pct'] < 5 else '建议的 10%'}。",
+            f"把现金补到 10%：还需约 {max(need, 0):,.0f} 元，优先从 {weakest['name'] if weakest else '浮亏最大持仓'} 减仓。",
+            f"{exp['cash_pct']:.1f}%", steps)
     elif exp["cash_pct"] > 25:
+        batch = total * 0.03
+        steps = [
+            f"现金 {exp['cash']:,.0f} 元，占总资产 {exp['cash_pct']:.1f}%，超过 25% 的闲置线。",
+            (f"分 3 批配置宽基：每次约 {batch:,.0f} 元（总资产 3%），间隔至少 5 个交易日，"
+             "优先沪深300 / 中证500 这类宽基，不买行业主题。")
+            if trend.get("stabilized") else
+            "先别买：现在净值还没企稳（3 个净值日不创新低 + 回升 2%），现金先放着，等信号出现再分 3 批买。",
+            "也可以先放货币基金/国债逆回购，别让钱完全闲置。",
+        ]
         add("低", "现金闲置偏多", f"现金占总资产 {exp['cash_pct']:.1f}%，超过 25%。",
-            "分批配置宽基 ETF 或货币基金，别让资金长期空转。", f"{exp['cash_pct']:.1f}%")
+            "净值企稳后分 3 批买宽基，每次 3% 总资产。", f"{exp['cash_pct']:.1f}%", steps)
 
     stock_count = len([p for p in exp["positions"] if p["value"] > 0])
     if stock_count < 4:
+        sectors = [s["sector"] for s in exp["sectors"]]
+        steps = [
+            f"现在只有 {stock_count} 只有效持仓，至少补到 5 只、3-5 个行业。",
+            f"单只新买入不超过总资产 15%（约 {total * 0.15:,.0f} 元），第一次先买 5%（约 {total * 0.05:,.0f} 元）。",
+            f"避开已有行业：{'、'.join(sectors) or '—'}；优先选弱相关的宽基或行业。",
+            "等净值企稳后再买，现在先选好标的、列好价格，不动手。",
+        ]
         add("中", "持仓过于集中", f"仅有 {stock_count} 只有效持仓。",
-            "分散到 5-8 只、3-5 个行业，单只不超过 20%。", f"{stock_count} 只")
+            f"补到 5 只、3-5 个行业，单只不超过 15%。", f"{stock_count} 只", steps)
     elif stock_count > 10:
+        small = [p for p in exp["positions"] if p["pct_total"] < 2]
+        steps = [
+            f"持有 {stock_count} 只，超过 10 只，精力会被摊薄。",
+            f"先把占总资产不到 2%（{total * 0.02:,.0f} 元）的小仓位列出来："
+            + ("、".join(f"{p['name']}（{p['pct_total']:.1f}%）" for p in small) if small else "暂无") + "。",
+            "优先清理其中浮亏且长期跑输的，一次卖 1 只，卖完的钱先放现金。",
+            "保留 6-8 只有把握的，单只不超过总资产 20%。",
+        ]
         add("低", "持仓过于分散", f"持有 {stock_count} 只股票，管理精力被摊薄。",
-            "保留最有把握的 6-8 只，清理小仓位。", f"{stock_count} 只")
+            "清理 2% 以下的小仓位，保留 6-8 只。", f"{stock_count} 只", steps)
 
     order = {"高": 0, "中": 1, "低": 2}
     rows.sort(key=lambda r: order.get(r["level"], 3))
@@ -334,7 +534,9 @@ def alerts(stocks):
             gap = (price / cost - 1) * 100
             if -5 <= gap < 0:
                 out.append({"type": "接近回本", "name": s["name"],
-                            "text": f"距成本 {abs(gap):.1f}%，回本价 {cost:.2f}",
+                            "text": (f"距成本 {abs(gap):.1f}%，回本价 {cost:.2f}；"
+                                     f"到价可先减 1/3（{_lots(qty / 3)} 股，约 {_lots(qty / 3) * cost:,.0f} 元），"
+                                     "剩下的再看。"),
                             "level": "低"})
     order = {"高": 0, "中": 1, "低": 2}
     out.sort(key=lambda x: order.get(x["level"], 3))
@@ -438,21 +640,22 @@ def health(perf=None, exp=None):
 
 
 def verdict(snap):
-    """把数据压成一句话：今天该不该动手 + 为什么 + 触发条件"""
+    """把数据压成一句话：今天该不该动手 + 为什么 + 具体怎么做"""
     alerts = snap.get("alerts") or []
     risk_rows = snap.get("risks") or []
-    perf_m = (snap.get("performance") or {}).get("metrics", {})
+    perf = snap.get("performance") or {}
     exp = snap.get("exposure") or {}
     rec = snap.get("recovery") or {}
+    trend = nav_trend(perf)
 
     high_risks = [r for r in risk_rows if r["level"] == "高"]
     high_alerts = [a for a in alerts if a["level"] == "高"]
 
     if high_risks or high_alerts:
-        headline = "今天：不加仓，先控风险"
+        headline = "今天：不买，先控风险"
         tone = "warning"
     elif risk_rows:
-        headline = "今天：不开新仓，处理现有持仓"
+        headline = "今天：不新开仓，处理现有持仓"
         tone = "caution"
     else:
         headline = "今天：不用动手，持有观察"
@@ -469,20 +672,60 @@ def verdict(snap):
         reasons.append(f"现金占总资产 {exp['cash_pct']:.1f}%")
 
     triggers = []
-    for a in high_alerts[:1] + [x for x in alerts if x["level"] == "中"][:1]:
-        triggers.append(f"{a['name']}：{a['text']}，先看有没有基本面消息，不做情绪化补仓。")
-    for p in rec.get("positions", [])[:2]:
-        if p["rise_needed"] >= 15:
+    if trend.get("defined"):
+        if trend["stabilized"]:
             triggers.append(
-                f"{p['name']} 现价 {p['price']:.2f}，回本需涨 {p['rise_needed']:.1f}% 到 {p['cost']:.2f}；"
-                f"反弹 10%（{p['price']*1.1:.2f}）可先减 1/3。"
-            )
+                f"「净值企稳」已满足：{trend['trough_date']} 见低点，已连续 {trend['days_since_low']} 个净值日不创新低，"
+                f"回升 {trend['rebound_pct']:+.1f}%。可以开始用不超过总资产 5%"
+                f"（约 {exp.get('total_value', 0) * 0.05:,.0f} 元）分 2-3 次试买。")
+        else:
+            triggers.append(
+                f"「净值企稳」没满足：{trend['trough_date']} 见低点后只有 {trend['days_since_low']} 个净值日"
+                f"（要 3 个），较低点回升 {trend['rebound_pct']:+.1f}%（要 ≥2%）。"
+                "现在做什么：不买、不抄底；下一个净值日再看这两个数字。")
+
+    for p in rec.get("positions", [])[:2]:
+        if p["rise_needed"] >= 15 and p["price"] > 0:
+            q1 = _lots(p["qty"] / 3)
+            triggers.append(
+                f"{p['name']} 现价 {p['price']:.2f}，成本 {p['cost']:.2f}（回本要涨 {p['rise_needed']:.1f}%）。"
+                f"反弹到 {p['price'] * 1.1:.2f}（+10%）先卖 {q1} 股（约 {q1 * p['price'] * 1.1:,.0f} 元）；"
+                f"到 {p['price'] * 1.2:.2f}（+20%）再卖 {q1} 股。今天不补仓。")
+
     if exp.get("cash_pct", 0) > 20:
-        triggers.append(f"现金 {exp['cash']:,.0f} 元（{exp['cash_pct']:.1f}%）：回撤未收窄前不动，不抄底。")
+        triggers.append(
+            f"现金 {exp['cash']:,.0f} 元（占总资产 {exp['cash_pct']:.1f}%）：现在保留不动，不抄底。"
+            f"低于 10%（约 {exp.get('total_value', 0) * 0.10:,.0f} 元）时才需要从持仓减仓补现金。")
     if not triggers:
         triggers.append("没有触发条件，今天不需要操作。")
 
     return {"headline": headline, "tone": tone, "reasons": reasons[:3], "triggers": triggers[:3]}
+
+
+def glossary(perf=None, exp=None):
+    """把建议里出现的术语翻译成能直接照做的标准"""
+    trend = nav_trend(perf)
+    total = (exp or {}).get("total_value", 0)
+    return [
+        {"term": "净值企稳",
+         "meaning": ("从这轮低点开始，连续 3 个净值日（每个交易日收盘后自动记录的净值快照）"
+                     "都不创新低，并且最新净值比低点高 2% 以上，两个条件同时满足才算。"
+                     + _stabilize_status(trend))},
+        {"term": "净值日",
+         "meaning": "指盘后记录一条净值快照的日子，正常一个交易日一条；周末和节假日没有。"},
+        {"term": "最大回撤",
+         "meaning": "从历史最高点跌到最低点的幅度，衡量最坏情况下账户缩水多少。"},
+        {"term": "回本需涨",
+         "meaning": "（净投入本金 − 当前总资产）÷ 当前总资产。比如还差 10%，账户整体涨 10% 才回本。"},
+        {"term": "1/3 仓位",
+         "meaning": "按持有的股数算，不是按金额猜。例如持有 900 股，1/3 就是卖 300 股；不足 100 股按 100 股算。"},
+        {"term": "试买额度 5%",
+         "meaning": f"按总资产算。现在总资产 {total:,.0f} 元，5% 约为 {total * 0.05:,.0f} 元，"
+                    "分成 2-3 次买，不是一次买完。"},
+        {"term": "摊薄成本",
+         "meaning": ("卖出盈利会摊低剩余持仓的成本价，所以可能出现负数；负成本表示这只已经全部回本还有赚，"
+                     "不是数据错误。")},
+    ]
 
 
 def snapshot(stocks=None):
@@ -500,6 +743,7 @@ def snapshot(stocks=None):
         "alerts": alerts(stocks or []),
         "health": health(perf, exp),
         "recovery": recovery(),
+        "glossary": glossary(perf, exp),
     }
     snap["verdict"] = verdict(snap)
     return snap
