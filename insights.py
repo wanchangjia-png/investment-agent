@@ -740,6 +740,137 @@ def glossary(perf=None, exp=None):
     ]
 
 
+def market_snapshot():
+    """沪深300 近期走势，给 AI 判断大盘环境用"""
+    bench = fetch_index_history(240)
+    if not bench:
+        return {"defined": False}
+    dates = sorted(bench)
+    closes = [bench[d] for d in dates]
+    last_date, last = dates[-1], closes[-1]
+
+    def ret(n):
+        if len(closes) <= n:
+            return None
+        return round((last / closes[-1 - n] - 1) * 100, 2)
+
+    win20 = closes[-20:] if len(closes) >= 20 else closes
+    win60 = closes[-60:] if len(closes) >= 60 else closes
+    high20, low20 = max(win20), min(win20)
+    up_streak = down_streak = 0
+    for i in range(len(closes) - 1, 0, -1):
+        if closes[i] > closes[i - 1]:
+            up_streak += 1
+        else:
+            break
+    for i in range(len(closes) - 1, 0, -1):
+        if closes[i] < closes[i - 1]:
+            down_streak += 1
+        else:
+            break
+    return {
+        "defined": True,
+        "name": BENCHMARK_NAME,
+        "date": last_date,
+        "close": round(last, 2),
+        "ret_5d": ret(5),
+        "ret_20d": ret(20),
+        "ret_60d": ret(60),
+        "high_20d": round(high20, 2),
+        "low_20d": round(low20, 2),
+        "off_high_20d": round((last / high20 - 1) * 100, 2) if high20 else 0,
+        "above_low_20d": round((last / low20 - 1) * 100, 2) if low20 else 0,
+        "high_60d": round(max(win60), 2),
+        "low_60d": round(min(win60), 2),
+        "up_streak": up_streak,
+        "down_streak": down_streak,
+    }
+
+
+def _theme(p):
+    sector = (p.get("sector") or "").split("（")[0]
+    name = p.get("name") or ""
+    if "半导体" in name or "半导体" in sector or "芯片" in sector:
+        return "半导体"
+    if "新能源车" in sector:
+        return "新能源车"
+    if "消费电子" in sector:
+        return "消费电子"
+    return sector or "其他"
+
+
+def structure_advice(exp=None):
+    """直接回答：股票数量多不多、哪些持仓重复"""
+    exp = exp or exposure()
+    positions = [p for p in exp.get("positions", []) if p["value"] > 0]
+    n = len(positions)
+    total = exp.get("total_value", 0)
+    if n == 0:
+        return {"count": 0, "verdict": "偏少", "headline": "目前没有股票持仓。", "points": []}
+
+    if 5 <= n <= 8:
+        verdict = "合适"
+    elif n > 8:
+        verdict = "偏多"
+    else:
+        verdict = "偏少"
+
+    points = []
+    small = [p for p in positions if p["pct_total"] < 3.0]
+    if small:
+        names = "、".join(f"{p['name']}（{p['pct_total']:.1f}%）" for p in small)
+        points.append(
+            f"有 {len(small)} 只占比低于 3%：{names}，合计 {sum(p['value'] for p in small):,.0f} 元、"
+            f"{sum(p['pct_total'] for p in small):.1f}%。这类小仓位对收益贡献有限，却要花精力盯，"
+            "建议合并或清掉。")
+
+    groups = defaultdict(list)
+    for p in positions:
+        groups[_theme(p)].append(p)
+    overlaps = []
+    for theme, ps in groups.items():
+        if len(ps) < 2:
+            continue
+        pct = sum(p["pct_total"] for p in ps)
+        keep = max(ps, key=lambda p: p["value"])
+        merge_out = min(ps, key=lambda p: p["value"])
+        overlaps.append({"theme": theme, "names": [p["name"] for p in ps],
+                         "pct_total": round(pct, 1), "keep": keep["name"],
+                         "merge_out": merge_out["name"],
+                         "merge_value": round(merge_out["value"], 0)})
+        if pct >= 12:
+            points.append(
+                f"{theme} 有 {len(ps)} 只（{'、'.join(p['name'] for p in ps)}），合计占总资产 {pct:.1f}%，"
+                f"暴露偏重。以后加仓只能选其中一只；如果只想留一只，优先保留 {keep['name']}，"
+                f"卖出 {merge_out['name']}（约 {merge_out['value']:,.0f} 元）。")
+        else:
+            points.append(
+                f"{theme} 有 {len(ps)} 只（{'、'.join(p['name'] for p in ps)}），合计 {pct:.1f}%，"
+                f"方向重复但金额不大；二选一保留即可，卖出较小的 {merge_out['name']}"
+                f"（约 {merge_out['value']:,.0f} 元），别两边都补。")
+
+    if not small and not overlaps:
+        points.append("没有低于 3% 的碎仓，也没有明显的同行业重复，结构是干净的。")
+
+    if verdict == "偏多":
+        headline = f"当前 {n} 只，偏多。按你的资金量（约 {total / 10000:.1f} 万），5-8 只足够覆盖，建议先清理小仓位。"
+    elif verdict == "偏少":
+        headline = f"当前 {n} 只，偏少。按你的资金量（约 {total / 10000:.1f} 万），5-8 只、3-5 个行业更稳。"
+    else:
+        headline = (f"当前 {n} 只，数量合适（5-8 只为宜），不用为了凑数再买；"
+                    f"下一步是把结构理干净。")
+
+    return {
+        "count": n,
+        "verdict": verdict,
+        "ideal_range": "5-8 只",
+        "headline": headline,
+        "points": points[:4],
+        "small_positions": [p["name"] for p in small],
+        "overlaps": overlaps,
+    }
+
+
 def _gold_position():
     for h in agent.load_portfolio():
         if h["类别"] == "黄金" and _num(h["数量"]) > 0:
@@ -938,6 +1069,8 @@ def snapshot(stocks=None):
         "recovery": recovery(),
         "glossary": glossary(perf, exp),
         "discipline": discipline(perf, exp),
+        "market": market_snapshot(),
+        "structure": structure_advice(exp),
     }
     snap["verdict"] = verdict(snap)
     return snap

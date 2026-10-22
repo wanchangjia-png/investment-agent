@@ -265,11 +265,13 @@ def _build_system_prompt():
 
 
 def _bing_parse(html, max_results):
-    """解析 Bing 搜索结果页（li.b_algo 块）"""
+    """解析 Bing 搜索结果页（li.b_algo 块），优先取 h2 里的真实标题"""
     results = []
     blocks = re.findall(r'<li class="b_algo".*?</li>', html, re.DOTALL)
     for block in blocks[:max_results]:
-        m = re.search(r'<a[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>', block, re.DOTALL)
+        m = re.search(r'<h2[^>]*>\s*<a[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>', block, re.DOTALL)
+        if not m:
+            m = re.search(r'<a[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>', block, re.DOTALL)
         if not m:
             continue
         title = re.sub(r'<[^>]+>', '', m.group(2)).strip()
@@ -349,6 +351,59 @@ def web_search(query, max_results=5):
             continue
 
     return results
+
+
+_NEWS_JUNK = (
+    "quote.eastmoney.com", "baike.baidu.com", "xueqiu.com/hq",
+    "q.10jqka.com.cn/", "realstock/company", "finance.sina.com.cn/stock/",
+)
+
+
+def _news_ok(title, url, snippet):
+    if not title or "http" in title.lower() or len(title) < 6:
+        return False
+    if len(snippet or "") < 20:
+        return False
+    for junk in _NEWS_JUNK:
+        if junk in (url or ""):
+            return False
+    return True
+
+
+def finance_news(limit=20, pages=2, keywords=None):
+    """新浪财经 7x24 快讯（真实新闻流），可按持仓关键词优先排序"""
+    ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+    items, seen = [], set()
+    for page in range(1, pages + 1):
+        try:
+            url = (f"https://zhibo.sina.com.cn/api/zhibo/feed?zhibo_id=152"
+                   f"&page={page}&page_size=50&tag_id=0")
+            req = urllib.request.Request(url, headers={
+                "User-Agent": ua, "Referer": "https://finance.sina.com.cn"})
+            raw = urllib.request.urlopen(req, timeout=10).read().decode("utf-8", "ignore")
+            feed = json.loads(raw)["result"]["data"]["feed"]["list"]
+        except Exception as e:
+            print(f"⚠️ 新浪快讯第 {page} 页失败: {e}")
+            continue
+        for it in feed:
+            text = re.sub(r"<[^>]+>", "", it.get("rich_text") or it.get("text") or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            m = re.match(r"^【(.+?)】(.*)$", text, re.S)
+            title = (m.group(1) if m else text[:40]).strip()
+            snippet = (m.group(2) if m else text)[:140].strip() or text[:140]
+            items.append({
+                "title": title, "snippet": snippet,
+                "url": (it.get("docurl") or "https://finance.sina.com.cn/7x24/").strip(),
+                "time": (it.get("create_time") or "")[5:16],
+            })
+    kws = [k for k in (keywords or []) if k]
+    if kws:
+        hit = [i for i in items if any(k in i["title"] + i["snippet"] for k in kws)]
+        rest = [i for i in items if i not in hit]
+        items = hit + rest
+    return items[:limit]
 
 
 def chat_stream(messages, search_enabled=True):
@@ -953,6 +1008,245 @@ def _save_briefing(day, content, source):
         return False
 
 
+# ============ AI 市场判断（企稳与否 + 今天能不能买）============
+MARKET_SHEET = "市场判断"
+_market_cache = {"at": None, "data": None}
+
+
+def _market_sheet(wb):
+    if MARKET_SHEET in wb.sheetnames:
+        return wb[MARKET_SHEET]
+    ws = wb.create_sheet(MARKET_SHEET)
+    ws.append(["时间", "日期", "结论", "置信度", "内容JSON", "来源JSON"])
+    return ws
+
+
+def _cache_fresh(at, max_age_min):
+    if not at:
+        return False
+    try:
+        return (datetime.now() - at).total_seconds() < max_age_min * 60
+    except Exception:
+        return False
+
+
+def _load_market_view(max_age_min=30):
+    if _market_cache["data"] and _cache_fresh(_market_cache["at"], max_age_min):
+        return _market_cache["data"]
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(agent.EXCEL_PATH, data_only=True)
+        if MARKET_SHEET not in wb.sheetnames:
+            wb.close()
+            return None
+        ws = wb[MARKET_SHEET]
+        last = None
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row and row[4]:
+                last = row
+        wb.close()
+        if not last:
+            return None
+        at = datetime.strptime(str(last[0]), "%Y-%m-%d %H:%M:%S")
+        if not _cache_fresh(at, max_age_min):
+            return None
+        data = json.loads(last[4])
+        data["sources"] = json.loads(last[5]) if last[5] else []
+        _market_cache["at"] = at
+        _market_cache["data"] = data
+        return data
+    except Exception as e:
+        print(f"⚠️ 读取市场判断缓存失败: {e}")
+        return None
+
+
+def _save_market_view(data):
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(agent.EXCEL_PATH)
+        ws = _market_sheet(wb)
+        ws.append([
+            data.get("as_of", ""), data.get("as_of", "")[:10],
+            data.get("stance", ""), data.get("confidence", ""),
+            json.dumps({k: v for k, v in data.items() if k != "sources"}, ensure_ascii=False),
+            json.dumps(data.get("sources", []), ensure_ascii=False),
+        ])
+        wb.save(agent.EXCEL_PATH)
+        wb.close()
+        _market_cache["at"] = datetime.now()
+        _market_cache["data"] = data
+        return True
+    except Exception as e:
+        print(f"⚠️ 保存市场判断失败: {e}")
+        return False
+
+
+def _rule_market_view(snap, note=""):
+    disc = snap.get("discipline") or {}
+    nav = (disc.get("nav") or {})
+    ms = snap.get("market") or {}
+    stabilized = bool(nav.get("stabilized"))
+    stance = "已企稳" if stabilized else "未企稳"
+    summary = (
+        f"净值{stance}：低点后 {nav.get('days_since_low', 0)} 个净值日不创新低、"
+        f"回升 {nav.get('rebound_pct', 0):+.1f}%；沪深300 20 日 {ms.get('ret_20d', 0):+.1f}%。"
+    )
+    return {
+        "stance": stance, "confidence": "低", "summary": summary,
+        "market_note": (f"沪深300 最新 {ms.get('close', '—')}，20 日 {ms.get('ret_20d', 0):+.1f}%，"
+                        f"距 20 日高点 {ms.get('off_high_20d', 0):+.1f}%。"),
+        "account_note": nav.get("stabilized") and "账户净值已满足企稳条件。" or
+                        "账户净值尚未满足「连续 3 个净值日不创新低 + 回升 2%」。",
+        "reason": note or "未配置 AI Key，只能按大盘和净值规则判断，无法结合新闻。",
+        "what_changes": "连续 3 个净值日不创新低且回升 2%，同时大盘不再创新低。",
+        "buy_permission": "继续暂停",
+        "evidence": [], "sources": [],
+        "rule": {"stance": stance, "days_since_low": nav.get("days_since_low", 0),
+                 "rebound_pct": nav.get("rebound_pct", 0), "trough_date": nav.get("trough_date", "")},
+        "as_of": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "source": "规则",
+    }
+
+
+def _ai_market_view():
+    api_key = LLM_CONFIG["api_key"] or os.environ.get("DEEPSEEK_API_KEY", "")
+    if not api_key:
+        return _rule_market_view(insights.snapshot(_today_stocks()))
+
+    snap = insights.snapshot(_today_stocks())
+    ms = snap.get("market") or {}
+    disc = snap.get("discipline") or {}
+    nav = disc.get("nav") or {}
+    exp = snap.get("exposure") or {}
+    perf_m = (snap.get("performance") or {}).get("metrics", {})
+    attr = (snap.get("attribution") or {}).get("items", [])[:5]
+    rec = snap.get("recovery") or {}
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    names = [p.get("name", "") for p in (exp.get("positions") or [])]
+    sector_words = [(s.get("sector") or "").split("（")[0] for s in (exp.get("sectors") or [])[:3]]
+    keywords = list(dict.fromkeys([x for x in names + sector_words + ["沪深300", "A股", "大盘"] if x]))
+
+    sources, news_items, seen = [], [], set()
+    for it in finance_news(limit=16, keywords=keywords):
+        if it["title"] in seen:
+            continue
+        seen.add(it["title"])
+        news_items.append(f"- [{it['time']}] {it['title']}：{it['snippet'][:100]}")
+        sources.append({"title": it["title"], "url": it["url"], "snippet": it["snippet"],
+                        "time": it["time"]})
+        if len(news_items) >= 10:
+            break
+
+    sector_q = " ".join(sector_words[:2])
+    for q in [f"A股 大盘 走势 分析 {today}", f"{sector_q} 板块 最新消息"]:
+        if len(news_items) >= 12:
+            break
+        for r in web_search(q, max_results=3):
+            title = (r.get("title") or "").strip()
+            snippet = (r.get("snippet") or "").strip()[:120]
+            if title in seen or not _news_ok(title, r.get("url"), snippet):
+                continue
+            seen.add(title)
+            news_items.append(f"- {title}：{snippet}")
+            sources.append({"title": title, "url": r.get("url", ""), "snippet": snippet})
+            if len(news_items) >= 12:
+                break
+    news_context = "\n".join(news_items) if news_items else "（本次没有搜到有效新闻）"
+
+    gates_text = "；".join(
+        f"{g['label']}：{'通过' if g['ok'] is True else '未通过' if g['ok'] is False else '待确认'}"
+        for g in disc.get("gates", []))
+
+    context = f"""## 大盘（沪深300）
+- 最新日期/收盘：{ms.get('date', '—')} / {ms.get('close', '—')}
+- 近 5 日 {ms.get('ret_5d', 0):+.2f}%；近 20 日 {ms.get('ret_20d', 0):+.2f}%；近 60 日 {ms.get('ret_60d', 0):+.2f}%
+- 距 20 日高点 {ms.get('off_high_20d', 0):+.2f}%；高于 20 日低点 {ms.get('above_low_20d', 0):+.2f}%
+- 当前连跌 {ms.get('down_streak', 0)} 天 / 连涨 {ms.get('up_streak', 0)} 天
+
+## 账户净值（时间加权，已剔除出入金）
+- 机械规则判断：{'已企稳' if nav.get('stabilized') else '未企稳'}
+- 最近低点 {nav.get('trough_date', '—')}，低点后 {nav.get('days_since_low', 0)} 个净值日，较低点回升 {nav.get('rebound_pct', 0):+.2f}%
+- 区间账户收益 {perf_m.get('account_return', 0):+.2f}%，沪深300 {perf_m.get('benchmark_return', 0):+.2f}%，超额 {perf_m.get('excess_return', 0):+.2f}pp；最大回撤 {perf_m.get('max_drawdown', 0):+.2f}%
+- 整体回本需上涨 {rec.get('need_pct', 0):.1f}%
+
+## 账户与纪律
+- 总资产 {exp.get('total_value', 0):,.0f} 元；现金 {exp.get('cash', 0):,.0f} 元（{exp.get('cash_pct', 0):.1f}%，底线 20%）
+- 前三大持仓合计 {exp.get('top3_pct', 0):.1f}%；最大单票 {exp.get('top1_pct', 0):.1f}%
+- 补仓五关：{gates_text}
+
+## 盈亏拖累
+{chr(10).join(f"- {x['name']}：{x['pnl']:+,.0f} 元（{x['share']:+.0f}%）" for x in attr) or '- 无'}
+
+## 最新新闻（只能引用这里，不能编造）
+{news_context}
+"""
+
+    system = """你是万万的 A 股投资顾问。你必须给出明确判断，不要和稀泥。
+硬性规则：
+1. 只能引用上面出现的数字和新闻标题/摘要，禁止编造新闻、政策、支撑位、压力位、点位预测。
+2. 严格区分「市场企稳」和「账户净值企稳」，不要混为一谈。
+3. 必须遵守她的纪律：现金低于 20% 时，buy_permission 最多只能是「继续暂停」；补仓五关未过，不能建议买入。
+4. 新闻不足以判断就直说「新闻不足」，并降低 confidence，主要依据指数和净值。
+5. 输出纯 JSON，不要任何其他文字、不要 markdown。"""
+    prompt = f"""{context}
+
+## 任务
+结合大盘、账户净值和新闻，判断：
+1) 市场是否企稳；2) 账户是否企稳；3) 今天能不能恢复买入或补仓。
+
+输出 JSON：
+{{
+  "stance": "已企稳" 或 "未企稳" 或 "观察中",
+  "confidence": "高" 或 "中" 或 "低",
+  "summary": "一句话结论，不超过 50 字",
+  "market_note": "大盘环境 1-2 句，必须带数字",
+  "account_note": "账户净值 1-2 句，必须带机械规则数字",
+  "reason": "综合理由 2-3 句，有新闻就引用新闻标题",
+  "what_changes": "看到什么会改判，要具体可观察",
+  "buy_permission": "可以恢复买入" 或 "只能小幅试买" 或 "继续暂停",
+  "evidence": ["引用的新闻标题，必须来自上面的列表，没有就空数组"]
+}}"""
+
+    raw = _call_llm_text(system, prompt, max_tokens=700, temperature=0.2)
+    if not raw:
+        return _rule_market_view(snap, note="AI 调用失败，已退回规则判断。")
+    try:
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        data = json.loads(m.group()) if m else json.loads(raw)
+    except Exception as e:
+        print(f"⚠️ 市场判断 JSON 解析失败: {e}\n{raw[:300]}")
+        return _rule_market_view(snap, note="AI 返回格式异常，已退回规则判断。")
+
+    data["evidence"] = [x for x in (data.get("evidence") or []) if isinstance(x, str)][:4]
+    blob = " ".join(str(data.get(k) or "") for k in
+                    ("summary", "market_note", "account_note", "reason", "what_changes"))
+    blob += " " + " ".join(data["evidence"])
+    picked = [s for s in sources if s["title"] in blob or s["title"][:12] in blob]
+    data["sources"] = (picked or sources)[:5]
+    data["rule"] = {
+        "stance": "已企稳" if nav.get("stabilized") else "未企稳",
+        "days_since_low": nav.get("days_since_low", 0),
+        "rebound_pct": nav.get("rebound_pct", 0),
+        "trough_date": nav.get("trough_date", ""),
+    }
+    data["gates"] = disc.get("gates", [])
+    data["as_of"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    data["source"] = "AI"
+    data["market"] = ms
+    return data
+
+
+def api_market_view(force=False):
+    if not force:
+        cached = _load_market_view(30)
+        if cached:
+            return {"success": True, "cached": True, **cached}
+    data = _ai_market_view()
+    _save_market_view(data)
+    return {"success": True, "cached": False, **data}
+
+
 def _rule_briefing(snap):
     """不依赖 AI 的兜底晨报：只说结论、原因和触发条件"""
     v = snap.get("verdict") or {}
@@ -1242,6 +1536,12 @@ class PortfolioHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
+        elif path == "/api/market-view":
+            try:
+                self._send_json(api_market_view())
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
         else:
             self._send_json({"error": "not found"}, 404)
 
@@ -1468,6 +1768,12 @@ class PortfolioHandler(BaseHTTPRequestHandler):
         elif path == "/api/briefing":
             try:
                 self._send_json(api_briefing(force=bool(data.get("force"))))
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif path == "/api/market-view":
+            try:
+                self._send_json(api_market_view(force=bool(data.get("force"))))
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 

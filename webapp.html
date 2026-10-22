@@ -214,6 +214,27 @@ tr:hover { background: #f8f9ff; }
 .ac-grid div span { color: #888; }
 .ac-grid div b { color: #1a2b4a; }
 
+.market-card { border: 1px solid #e3e9f5; border-radius: 14px; padding: 16px 18px; margin-bottom: 14px;
+    background: linear-gradient(135deg, #f8faff, #eef4fd); }
+.market-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.market-head h3 { font-size: 14px; color: #1a2b4a; margin: 0; }
+.market-head .left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.market-stance { font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
+.market-stance.bad { background: #fff0f0; color: #CC0000; border: 1px solid #f0caca; }
+.market-stance.warn { background: #fffdf2; color: #A67C00; border: 1px solid #efe0b8; }
+.market-stance.good { background: #eef8f0; color: #2E7D32; border: 1px solid #cfe8d6; }
+.market-body { margin-top: 10px; font-size: 12.8px; line-height: 1.75; color: #444; }
+.market-body .row { margin-top: 7px; }
+.market-body .row .k { color: #2F5496; font-weight: 600; margin-right: 4px; }
+.market-body .evidence { margin: 6px 0 0 0; padding-left: 18px; color: #666; font-size: 12px; }
+.market-meta { margin-top: 10px; font-size: 11.5px; color: #999; display: flex; gap: 12px; flex-wrap: wrap; }
+.market-sources { margin-top: 6px; font-size: 11.5px; line-height: 1.7; }
+.market-sources a { color: #2F5496; text-decoration: none; }
+.structure-points { margin: 6px 0 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.75; color: #555; }
+.structure-item { font-size: 12.5px; line-height: 1.65; background: #fafbfe; border-radius: 8px;
+    border-left: 3px solid #d9e2f3; padding: 7px 10px; margin-top: 6px; }
+.structure-item.warn { border-left-color: #A67C00; background: #fffdf4; }
+
 .loss-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin-bottom: 9px; }
 .loss-row .lname { width: 76px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .loss-row .ltrack { flex: 1; height: 10px; background: #f0f2f6; border-radius: 5px; overflow: hidden; }
@@ -396,7 +417,23 @@ tr:hover { background: #f8f9ff; }
                     </details>
                 </div>
 
+                <div class="market-card" id="marketCard">
+                    <div class="market-head">
+                        <div class="left">
+                            <h3>🧠 AI 市场判断</h3>
+                            <span class="market-stance" id="marketStance" style="display:none;"></span>
+                        </div>
+                        <button class="btn btn-sm btn-outline" id="marketRefreshBtn" onclick="loadMarketView(true)">重新判断</button>
+                    </div>
+                    <div class="market-body" id="marketBody"><span class="spinner"></span> 正在看市场数据和最新新闻，约 10–30 秒…</div>
+                </div>
+
                 <div class="metric-row" id="todayMetrics"></div>
+
+                <div class="panel" id="structurePanel" style="margin-bottom:14px;">
+                    <h4>持仓结构 <span class="badge" id="structureBadge">…</span></h4>
+                    <div id="structureBody"><div style="font-size:12px;color:#999;">加载中…</div></div>
+                </div>
 
                 <div class="today-grid">
                     <div class="panel">
@@ -1182,7 +1219,7 @@ function switchTab(name, btn) {
     if (name === "breakeven") loadBreakeven();
     if (name === "cleared") renderCleared();
     if (name === "transactions") loadTransactions();
-    if (name === "today") loadToday();
+    if (name === "today") { loadToday(); loadMarketView(); }
     if (name === "risks") loadInsights();
     if (name === "decisions") loadDecisions();
 }
@@ -2412,6 +2449,7 @@ function renderTodaySide(snap) {
 
     renderTodayMetrics(snap);
     renderDiscipline(snap);
+    renderStructure(snap);
 
     // 亏损归因：只显示拖累最大的 3 只
     const losses = (snap.attribution || {}).items?.filter(x => x.pnl < 0).slice(0, 3) || [];
@@ -2479,6 +2517,93 @@ function renderDiscipline(snap) {
     document.getElementById("disciplineMax").textContent = max > 0
         ? `按纪律，今天最多可补 ${Math.round(max).toLocaleString()} 元`
         : "按纪律，今天可补额度为 0（现金低于 20% 或已触红线）";
+}
+
+// ============ AI 市场判断 ============
+async function loadMarketView(force) {
+    const body = document.getElementById("marketBody");
+    const btn = document.getElementById("marketRefreshBtn");
+    body.innerHTML = '<span class="spinner"></span> 正在看大盘、账户净值和最新新闻，约 10–30 秒…';
+    btn.disabled = true;
+    try {
+        const opts = force ? {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({force: true}),
+        } : {};
+        const res = await fetch("/api/market-view", opts);
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        renderMarketView(d);
+    } catch (e) {
+        body.textContent = "市场判断加载失败：" + e.message;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function renderMarketView(d) {
+    const stance = d.stance || "观察中";
+    const badge = document.getElementById("marketStance");
+    badge.textContent = `${stance} · 置信度${d.confidence || "低"}`;
+    badge.className = "market-stance " + (stance === "已企稳" ? "good" : stance === "未企稳" ? "bad" : "warn");
+    badge.style.display = "";
+
+    const perm = d.buy_permission || "";
+    const permCls = perm === "可以恢复买入" ? "good" : perm === "只能小幅试买" ? "warn" : "bad";
+    const row = (k, v) => v ? `<div class="row"><span class="k">${k}</span>${escapeHtml(v)}</div>` : "";
+    const short = t => t.length > 28 ? t.slice(0, 28) + "…" : t;
+    const srcList = d.sources || [];
+    const evidence = !srcList.length && (d.evidence || []).length
+        ? `<ul class="evidence">${d.evidence.map(x => `<li>${escapeHtml(x)}</li>`).join("")}</ul>` : "";
+    const sources = srcList.length
+        ? `<div class="market-sources">依据新闻：${srcList.slice(0, 3).map(s =>
+            s.url ? `<a href="${escapeHtml(s.url)}" target="_blank" rel="noopener" title="${escapeHtml(s.title)}">${escapeHtml(short(s.title))}</a>`
+                  : escapeHtml(short(s.title))).join(" · ")}</div>` : "";
+    const rule = d.rule || {};
+    const ruleText = rule.trough_date
+        ? `机械规则：低点 ${rule.trough_date}，已过 ${rule.days_since_low} 个净值日，回升 ${Number(rule.rebound_pct || 0).toFixed(1)}%`
+        : "";
+    const gates = (d.gates || []).map(g =>
+        `<span class="gate-chip ${g.ok === true ? "pass" : g.ok === false ? "fail" : "pending"}">${g.ok === true ? "✓" : g.ok === false ? "✗" : "○"} ${escapeHtml(g.label)}</span>`).join("");
+
+    document.getElementById("marketBody").innerHTML = `
+        <div class="row"><span class="k">今天能不能买：</span>
+            <span class="market-stance ${permCls}" style="font-size:12.5px;">${escapeHtml(perm || "继续暂停")}</span></div>
+        ${row("一句话", d.summary)}
+        ${row("大盘", d.market_note)}
+        ${row("账户", d.account_note)}
+        ${row("为什么", d.reason)}
+        ${row("改口条件", d.what_changes)}
+        ${evidence}
+        ${sources}
+        <div class="market-meta">
+            <span>${d.source === "AI" ? "AI 结合新闻判断" : "规则判断（未配置 AI Key）"} · ${escapeHtml(d.as_of || "")}</span>
+            ${d.source === "AI" ? "" : ""}
+        </div>
+        <div class="market-meta"><span>${escapeHtml(ruleText)}</span></div>
+        <div class="gate-row">${gates}</div>`;
+}
+
+function renderStructure(snap) {
+    const s = snap.structure || {};
+    const badge = document.getElementById("structureBadge");
+    const body = document.getElementById("structureBody");
+    if (!s.count) {
+        badge.textContent = "无持仓";
+        body.innerHTML = '<div style="font-size:12.5px;color:#888;">目前没有股票持仓。</div>';
+        return;
+    }
+    badge.textContent = `${s.count} 只 · ${s.verdict}`;
+    badge.className = "badge";
+    if (s.verdict === "偏多") { badge.style.background = "#fff4e5"; badge.style.color = "#A66600"; }
+    else if (s.verdict === "偏少") { badge.style.background = "#eef3ff"; badge.style.color = "#2F5496"; }
+    else { badge.style.background = "#eef8f0"; badge.style.color = "#2E7D32"; }
+
+    const points = (s.points || []).map(p => {
+        const warn = /清掉|卖出|偏重|重复/.test(p);
+        return `<div class="structure-item ${warn ? "warn" : ""}">${escapeHtml(p)}</div>`;
+    }).join("");
+    body.innerHTML = `<div style="font-size:13px;line-height:1.7;color:#333;">${escapeHtml(s.headline || "")}</div>${points}`;
 }
 
 // ============ 补仓算账 ============
@@ -2954,6 +3079,7 @@ function renderTransactions(d) {
 // 先用已保存的数据渲染，行情只在点「刷新」时拉取
 loadData();
 loadToday();
+loadMarketView();
 
 // 加载聊天历史（没有历史则显示默认问候）
 if (!loadChatHistory()) {
