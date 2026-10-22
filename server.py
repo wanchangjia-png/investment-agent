@@ -509,6 +509,23 @@ def _fetch_prev_closes():
     return prev_closes
 
 
+LAST_REFRESH_FILE = DATA_DIR / ".last_refresh"
+
+
+def _load_last_refresh():
+    try:
+        return LAST_REFRESH_FILE.read_text(encoding="utf-8").strip() or None
+    except Exception:
+        return None
+
+
+def _save_last_refresh():
+    try:
+        LAST_REFRESH_FILE.write_text(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def api_data():
     """返回持仓数据 JSON"""
     holdings = agent.load_portfolio()
@@ -591,6 +608,7 @@ def api_data():
 
     return {
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "updated_at": _load_last_refresh(),
         "total_value": total_value,
         "total_pnl": total_pnl,
         "unrealized_pnl": unrealized_pnl,
@@ -616,6 +634,7 @@ def api_refresh():
     if prices:
         holdings = agent.update_holdings_with_prices(holdings, prices, prev_closes)
         agent.save_prices(holdings)
+        _save_last_refresh()
     # 记录净值（只在15:00收盘后记录）
     total_value, total_pnl, accounts = agent.calculate(holdings)
     detail = {k: v["市值"] for k, v in accounts.items()}

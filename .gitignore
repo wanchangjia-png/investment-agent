@@ -6,3 +6,4 @@ __pycache__/
 dashboard.html
 dashboard.py
 create_portfolio.py
+.last_refresh

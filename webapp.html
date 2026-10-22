@@ -398,7 +398,7 @@ tr:hover { background: #f8f9ff; }
             <div class="tab-content" id="tabHoldings">
                 <div class="holdings-toolbar">
                     <button class="btn btn-sm btn-primary" onclick="showTradeModal()">🧾 记一笔交易</button>
-                    <span>记录买卖后，可在「更多 → 交易复盘」看胜率和逐笔盈亏</span>
+                    <span id="holdingsUpdated">记录买卖后，可在「更多 → 交易复盘」看胜率和逐笔盈亏</span>
                 </div>
                 <div class="table-wrap"><table><thead><tr>
                     <th onclick="sortBy('name')" style="cursor:pointer;">名称 <span class="sort-arrow"></span></th>
@@ -810,11 +810,22 @@ function getSortedStocks(stocks) {
 }
 
 // ============ 加载数据 ============
+function fmtUpdatedAt(v) {
+    if (!v) return "";
+    const s = String(v);
+    return s.length >= 16 ? s.slice(5, 16) : s;
+}
+
 async function loadData() {
     try {
         const res = await fetch("/api/data");
         state.data = await res.json();
+        state.lastUpdated = state.data.updated_at || null;
         render();
+        const bar = document.getElementById("statusBar");
+        bar.textContent = state.lastUpdated
+            ? `行情：${fmtUpdatedAt(state.lastUpdated)}（点刷新获取最新）`
+            : "点右上「刷新」获取最新行情";
     } catch (e) { document.getElementById("statusBar").textContent = "⚠️ 连接失败"; }
 }
 
@@ -845,9 +856,11 @@ async function refreshData() {
         const res = await fetch("/api/refresh");
         const result = await res.json();
         if (result.success) {
-            state.data = result.data; render();
+            state.data = result.data;
+            state.lastUpdated = result.data?.updated_at || state.lastUpdated;
+            render();
             const snapMsg = result.snapshot_recorded ? " 📸已记录净值" : "";
-            bar.textContent = "✅ " + new Date().toLocaleTimeString() + snapMsg;
+            bar.textContent = "✅ 行情已更新 " + fmtUpdatedAt(state.lastUpdated) + snapMsg;
         } else { bar.textContent = "⚠️ 刷新失败"; }
     } catch (e) { bar.textContent = "⚠️ 请求失败"; }
     btn.disabled = false;
@@ -856,6 +869,12 @@ async function refreshData() {
 // ============ 渲染 ============
 function render() {
     const d = state.data; if (!d) return;
+    const upd = document.getElementById("holdingsUpdated");
+    if (upd) {
+        upd.textContent = state.lastUpdated
+            ? `上次行情：${fmtUpdatedAt(state.lastUpdated)} · 点右上「🔄 刷新」更新`
+            : "还没手动刷新过 · 点右上「🔄 刷新」获取行情";
+    }
     // KPI
     document.getElementById("kpiTotal").textContent = d.total_value.toLocaleString();
     const pnlEl = document.getElementById("kpiPnl");
@@ -2319,7 +2338,7 @@ function renderTodayMetrics(snap) {
     const healthColor = h.score >= 80 ? "#2E7D32" : h.score >= 65 ? "#A67C00" : "#CC0000";
     const healthSub = (h.deductions || []).slice(0, 2).map(x => x.reason).join("；") || "无明显扣分";
     const tiles = [
-        { label: "今日盈亏", value: fmt(today), sub: "较前日收盘", color: col(today) },
+        { label: "今日盈亏", value: fmt(today), sub: "较前日收盘" + (state.lastUpdated ? ` · 行情 ${fmtUpdatedAt(state.lastUpdated)}` : ""), color: col(today) },
         { label: "累计盈亏", value: fmt(pf.total_pnl), sub: "含已实现", color: col(pf.total_pnl) },
         { label: "回本需涨", value: (rec.need_pct || 0).toFixed(1) + "%", sub: `还差 ${Math.round(rec.need_amount || 0).toLocaleString()} 元`, color: "#CC0000" },
         { label: "账户健康分", value: `${h.score || 0}/100`, sub: `${h.level || ""} · ${healthSub}`, color: healthColor },
