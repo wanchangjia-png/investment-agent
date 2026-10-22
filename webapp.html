@@ -533,6 +533,10 @@ tr:hover { background: #f8f9ff; }
             </div>
 
             <div class="tab-content" id="tabTransactions">
+                <div class="holdings-toolbar">
+                    <button class="btn btn-sm btn-outline" onclick="undoLastTransaction()">↩️ 撤销上一笔</button>
+                    <span style="font-size:12px;color:#888;">只撤销最后一笔手工交易；对账单导入的流水不能单笔撤销</span>
+                </div>
                 <div class="metric-row" id="txnMetrics"></div>
                 <div class="today-grid">
                     <div class="panel">
@@ -1538,7 +1542,7 @@ async function deleteCapitalFlow(row) {
         const res = await fetch("/api/capital-flow", {
             method: "POST",
             headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({ action: "delete", row })
+            body: JSON.stringify({ action: "delete", row, confirm: true })
         });
         const data = await res.json();
         if (data.success) {
@@ -1820,7 +1824,7 @@ async function deleteRealizedPnl(row) {
         const res = await fetch("/api/realized-pnl", {
             method: "POST",
             headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({action: "delete", row})
+            body: JSON.stringify({action: "delete", row, confirm: true})
         });
         const data = await res.json();
         if (data.success) {
@@ -2311,6 +2315,8 @@ function addEditRow(type) {
 }
 
 function deleteEditRow(idx) {
+    const row = editHoldingsData[idx];
+    if (row && row.name && !confirm(`从持仓里删除「${row.name}」？点保存后才会生效。`)) return;
     editHoldingsData[idx]._deleted = true;
     renderEditTable();
 }
@@ -2913,7 +2919,7 @@ async function reviewDecision(i) {
 async function deleteDecision(i) {
     const r = state.decisions[i];
     if (!r || !confirm(`删除「${r.name}」这条决策记录？`)) return;
-    await postDecision({action: "delete", row: r.row});
+    await postDecision({action: "delete", row: r.row, confirm: true});
 }
 
 // ============ 交易流水 / 复盘 ============
@@ -3116,6 +3122,23 @@ async function confirmTrade() {
     } finally {
         btn.textContent = "确认保存";
         btn.disabled = false;
+    }
+}
+
+async function undoLastTransaction() {
+    if (!confirm("撤销最后一笔交易？持仓和现金会恢复到交易前。")) return;
+    try {
+        const res = await fetch("/api/transactions", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "undo", confirm: true }),
+        });
+        const d = await res.json();
+        if (!d.success) { alert(d.error || "撤销失败"); return; }
+        loadData(); loadTransactions();
+        if (state.insights) loadToday();
+        alert(`已撤销：${d.direction} ${d.name} ${d.qty} 股`);
+    } catch (e) {
+        alert("撤销失败：" + e.message);
     }
 }
 

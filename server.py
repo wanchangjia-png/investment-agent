@@ -1585,6 +1585,17 @@ class PortfolioHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(content_length) if content_length > 0 else b"{}"
         data = json.loads(body) if body else {}
 
+        # 写操作前自动留快照；删除/撤销强制备份（不受 5 分钟节流影响）
+        _WRITE_PATHS = {
+            "/api/holdings-save", "/api/realized-pnl", "/api/capital-flow",
+            "/api/transactions", "/api/decisions", "/api/save-config", "/api/refresh",
+        }
+        if path in _WRITE_PATHS:
+            is_write = not (path == "/api/transactions" and data.get("action") == "preview")
+            destructive = data.get("action") in ("delete", "undo") or path == "/api/holdings-save"
+            if is_write:
+                agent.auto_backup(path.strip("/").replace("/", "_"), force=destructive)
+
         if path == "/api/chat":
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -1659,6 +1670,9 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                         agent.sync_portfolio_to_github()
                     self._send_json({"success": ok})
                 elif action == "delete":
+                    if not data.get("confirm"):
+                        self._send_json({"success": False, "error": "删除需要二次确认"}, 400)
+                        return
                     row = data.get("row")
                     if not row:
                         self._send_json({"success": False, "error": "缺少行号"})
@@ -1737,6 +1751,9 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                         agent.sync_portfolio_to_github()
                     self._send_json({"success": ok})
                 elif action == "delete":
+                    if not data.get("confirm"):
+                        self._send_json({"success": False, "error": "删除需要二次确认"}, 400)
+                        return
                     row = data.get("row")
                     if not row:
                         self._send_json({"success": False, "error": "缺少行号"})
@@ -1772,8 +1789,17 @@ class PortfolioHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/transactions":
             try:
-                if data.get("action") == "preview":
+                action = data.get("action")
+                if action == "preview":
                     self._send_json({"success": True, "preview": agent.preview_transaction(data)})
+                elif action == "undo":
+                    if not data.get("confirm"):
+                        self._send_json({"success": False, "error": "撤销需要二次确认"}, 400)
+                        return
+                    result = agent.undo_last_transaction()
+                    result.update(agent.transaction_review())
+                    agent.sync_portfolio_to_github()
+                    self._send_json(result)
                 else:
                     result = agent.record_transaction(data)
                     result.update(agent.transaction_review())
@@ -1819,6 +1845,9 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                                                   status=data.get("status"),
                                                   review=data.get("review"))
                 elif action == "delete":
+                    if not data.get("confirm"):
+                        self._send_json({"success": False, "error": "删除需要二次确认"}, 400)
+                        return
                     ok = insights.delete_decision(int(data["row"]))
                 else:
                     if not str(data.get("name", "")).strip():

@@ -13,6 +13,8 @@
 """
 import sys
 import os
+import shutil
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -24,6 +26,35 @@ from openpyxl.utils import get_column_letter
 # ============ 配置 ============
 DATA_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 EXCEL_PATH = Path(os.environ.get("PORTFOLIO_XLSX", DATA_DIR / "portfolio.xlsx"))
+BACKUP_DIR = Path(os.environ.get("PORTFOLIO_BACKUP_DIR", DATA_DIR / "backups"))
+BACKUP_KEEP_DAYS = 14
+
+_last_backup_ts = 0.0
+
+
+def auto_backup(reason="before_write", force=False, min_interval=300):
+    """写 Excel 前留一份快照；默认 5 分钟内只留一份，删除类操作强制备份。"""
+    global _last_backup_ts
+    if not EXCEL_PATH.exists():
+        return None
+    now = time.time()
+    if not force and now - _last_backup_ts < min_interval:
+        return None
+    try:
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(BEIJING_TZ).strftime("%Y%m%d_%H%M%S")
+        safe = "".join(c for c in reason if c.isalnum() or c in "-_")[:40] or "write"
+        path = BACKUP_DIR / f"portfolio_{stamp}_{safe}.xlsx"
+        shutil.copy2(EXCEL_PATH, path)
+        _last_backup_ts = now
+        cutoff = time.time() - BACKUP_KEEP_DAYS * 86400
+        for old in BACKUP_DIR.glob("portfolio_*.xlsx"):
+            if old.stat().st_mtime < cutoff:
+                old.unlink()
+        return str(path)
+    except Exception as e:
+        print(f"⚠️ 自动备份失败: {e}")
+        return None
 
 # A股代码映射（名称 → 代码）
 STOCK_CODES = {
@@ -999,6 +1030,84 @@ def record_transaction(data):
                             cost=preview["cost_before"], action="清仓",
                             amount=preview["realized_holdings"], date=date)
     return {"success": True, "synced": True, "preview": preview, "date": date}
+
+
+def undo_last_transaction():
+    """撤销最后一笔手工交易，把持仓/现金恢复到交易前。"""
+    txns = load_transactions()
+    if not txns:
+        raise ValueError("没有可撤销的交易")
+    t = txns[-1]
+    if str(t.get("note") or "").startswith("对账单导入"):
+        raise ValueError("对账单导入的流水不能单笔撤销；需要的话从 backups/ 里恢复整份账本")
+    if t["ledger_qty"] is None or t["basis"] is None:
+        raise ValueError("这笔交易缺少流水结存信息，无法安全撤销")
+
+    is_buy = t["direction"] == "买入"
+    before_qty = round(t["ledger_qty"] - t["qty"] if is_buy else t["ledger_qty"] + t["qty"], 4)
+    delta = -(t["amount"] + t["fee"]) if is_buy else (t["amount"] - t["fee"])
+
+    auto_backup("undo_transaction", force=True)
+
+    holdings = load_portfolio()
+    rows, stock_found, cash_found = [], False, False
+    for h in holdings:
+        item = {
+            "类别": h["类别"], "账户": h["账户"], "名称": h["名称"], "代码": h["代码"],
+            "数量": h["数量"], "成本价": h["成本价"], "现价": h["现价"], "备注": h["备注"],
+        }
+        if (h["类别"] != "现金" and h["名称"] == t["name"]
+                and (not t["account"] or h["账户"] == t["account"])):
+            # 流水存的是真实成本；持仓页是摊薄成本，按交易公式反推交易前成本
+            q_after = h["数量"] or 0
+            cost_after = h["成本价"] or 0
+            if before_qty <= 1e-9:
+                before_cost = 0.0
+            elif is_buy:
+                before_cost = round((q_after * cost_after - t["amount"] - t["fee"]) / before_qty, 3)
+            elif q_after <= 1e-9:
+                before_cost = round(cost_after, 3)
+            else:
+                before_cost = round((q_after * cost_after + t["amount"] - t["fee"]) / before_qty, 3)
+            item["数量"] = before_qty
+            item["成本价"] = max(before_cost, 0) if before_qty > 0 else 0
+            stock_found = True
+        if h["类别"] == "现金" and h["账户"] == t["account"]:
+            cash_after = round((h["数量"] or 0) - delta, 2)
+            item["数量"] = cash_after
+            item["市值"] = cash_after
+            cash_found = True
+        rows.append(item)
+    if not stock_found:
+        raise ValueError(f"持仓里找不到「{t['name']}」，无法撤销")
+    if not cash_found:
+        raise ValueError(f"找不到账户「{t['account']}」的现金行，无法撤销")
+
+    wb = openpyxl.load_workbook(EXCEL_PATH)
+    ws = wb[TRANSACTION_SHEET]
+    row_num = t["row"]
+    if (str(ws.cell(row_num, 1).value or "")[:10] != t["date"][:10]
+            or ws.cell(row_num, 4).value != t["name"]):
+        wb.close()
+        raise ValueError("流水行已变化，请刷新后再试")
+    ws.delete_rows(row_num)
+
+    if not is_buy and (t["ledger_qty"] or 0) <= 1e-9 and "已实现盈亏" in wb.sheetnames:
+        pnl_ws = wb["已实现盈亏"]
+        for r in range(pnl_ws.max_row, 1, -1):
+            if (str(pnl_ws.cell(r, 2).value or "") == t["name"]
+                    and str(pnl_ws.cell(r, 1).value or "")[:10] == t["date"][:10]):
+                pnl_ws.delete_rows(r)
+                break
+    wb.save(EXCEL_PATH)
+    wb.close()
+
+    save_holdings(rows)
+    return {
+        "success": True, "name": t["name"], "direction": t["direction"],
+        "qty": t["qty"], "date": t["date"], "qty_after": before_qty,
+        "cost_after": before_cost,
+    }
 
 
 def transaction_review():
