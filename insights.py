@@ -727,6 +727,8 @@ def glossary(perf=None, exp=None):
          "meaning": "从历史最高点跌到最低点的幅度，衡量最坏情况下账户缩水多少。"},
         {"term": "回本需涨",
          "meaning": "（净投入本金 − 当前总资产）÷ 当前总资产。比如还差 10%，账户整体涨 10% 才回本。"},
+        {"term": "1 手",
+         "meaning": "A 股 1 手 = 100 股，买入必须是整手；所以补仓金额会按「手数 × 100 × 现价」计算。"},
         {"term": "1/3 仓位",
          "meaning": "按持有的股数算，不是按金额猜。例如持有 900 股，1/3 就是卖 300 股；不足 100 股按 100 股算。"},
         {"term": "试买额度 5%",
@@ -826,8 +828,8 @@ def discipline(perf=None, exp=None):
     }
 
 
-def add_check(name, amount, price=None, fundamentals_ok=False):
-    """补仓前算账：五道门槛 + 补仓后的成本、仓位、现金、再跌 10%/20% 的损失"""
+def add_check(name, amount=None, price=None, fundamentals_ok=False, lots=None):
+    """补仓前算账：按手数（1 手 = 100 股）计算，五道门槛 + 补后成本/仓位/现金/跌幅损失"""
     holdings = agent.load_portfolio()
     total = sum(_num(h["市值"]) for h in holdings)
     cash = sum(_num(h["市值"]) for h in holdings if h["类别"] == "现金")
@@ -839,16 +841,21 @@ def add_check(name, amount, price=None, fundamentals_ok=False):
     price = float(price or _num(stock["现价"]))
     if price <= 0:
         raise ValueError("现价无效，请先刷新行情")
-    amount = float(amount or 0)
-    if amount <= 0:
-        raise ValueError("请输入补仓金额")
-    if amount > cash:
-        raise ValueError(f"现金只有 {cash:,.0f} 元，不够这笔补仓")
 
-    qty = _lots(amount / price)
-    if qty <= 0:
-        raise ValueError(f"金额不足一手（100 股约需 {price * 100:,.0f} 元）")
+    if lots is not None:
+        qty = int(lots) * 100
+        if qty <= 0:
+            raise ValueError("补仓手数至少 1 手（100 股）")
+    else:
+        amount = float(amount or 0)
+        if amount <= 0:
+            raise ValueError("请输入补仓手数")
+        qty = _lots(amount / price)
+        if qty <= 0:
+            raise ValueError(f"金额不足一手（100 股约需 {price * 100:,.0f} 元）")
     actual = qty * price
+    if actual > cash:
+        raise ValueError(f"现金只有 {cash:,.0f} 元，不够这笔补仓（需 {actual:,.0f} 元）")
     new_qty = qty_old + qty
     new_cost = (qty_old * cost_old + actual) / new_qty
     new_value = new_qty * price
@@ -893,6 +900,7 @@ def add_check(name, amount, price=None, fundamentals_ok=False):
         "gates": gates,
         "failed": [g["label"] for g in failed],
         "price": round(price, 3),
+        "lots": qty // 100,
         "qty": qty,
         "amount": round(actual, 0),
         "qty_old": int(qty_old),

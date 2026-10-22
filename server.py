@@ -1456,9 +1456,10 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                     return
                 result = insights.add_check(
                     name,
-                    float(data.get("amount") or 0),
+                    amount=data.get("amount"),
                     price=data.get("price"),
                     fundamentals_ok=bool(data.get("fundamentals_ok")),
+                    lots=data.get("lots"),
                 )
                 self._send_json({"success": True, **result})
             except Exception as e:

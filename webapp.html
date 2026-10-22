@@ -684,9 +684,9 @@ tr:hover { background: #f8f9ff; }
         </p>
         <div class="trade-form">
             <div class="field"><label>股票</label><select id="acName" onchange="onAddCheckNameChange()"></select></div>
-            <div class="field"><label>补仓金额（元）</label><input type="number" id="acAmount" min="0" step="100" value="10000" oninput="invalidateAddCheck()"></div>
+            <div class="field"><label>补几手（1 手 = 100 股）</label><input type="number" id="acLots" min="1" step="1" value="1" oninput="invalidateAddCheck()"></div>
             <div class="field"><label>预计成交价</label><input type="number" id="acPrice" min="0" step="0.001" oninput="invalidateAddCheck()"></div>
-            <div class="field"><label>补仓后持股</label><input id="acQtyPreview" disabled value="—"></div>
+            <div class="field" style="grid-column:1/-1;"><label>本次买入 / 补后持股</label><input id="acQtyPreview" disabled value="—"></div>
         </div>
         <label class="trade-sync" style="margin-top:10px;">
             <input type="checkbox" id="acFundamental" onchange="invalidateAddCheck()">
@@ -2490,8 +2490,7 @@ function showAddCheck(name) {
     document.getElementById("acFundamental").checked = false;
     document.getElementById("acResult").style.display = "none";
     document.getElementById("acError").style.display = "none";
-    const max = (state.insights && state.insights.discipline && state.insights.discipline.suggested_max) || 0;
-    document.getElementById("acAmount").value = max > 0 ? Math.round(max / 100) * 100 : 10000;
+    document.getElementById("acLots").value = 1;
     onAddCheckNameChange();
     document.getElementById("addCheckModal").classList.add("show");
 }
@@ -2509,11 +2508,13 @@ function onAddCheckNameChange() {
 
 function updateAcQtyPreview() {
     const price = parseFloat(document.getElementById("acPrice").value) || 0;
-    const amount = parseFloat(document.getElementById("acAmount").value) || 0;
+    const lots = parseInt(document.getElementById("acLots").value) || 0;
+    const shares = lots * 100;
+    const amount = shares * price;
     const s = ((state.data && state.data.stocks) || []).find(x => x.name === document.getElementById("acName").value);
-    const lots = price > 0 ? Math.floor(amount / price / 100) * 100 : 0;
-    document.getElementById("acQtyPreview").value = s && lots > 0
-        ? `${s.qty} → ${s.qty + lots} 股（本次 ${lots} 股）` : "—";
+    document.getElementById("acQtyPreview").value = s && lots > 0 && price > 0
+        ? `本次 ${lots} 手（${shares} 股）约 ${Math.round(amount).toLocaleString()} 元；${s.qty} → ${s.qty + shares} 股`
+        : "—";
 }
 
 function invalidateAddCheck() {
@@ -2523,19 +2524,19 @@ function invalidateAddCheck() {
 
 async function runAddCheck() {
     const name = document.getElementById("acName").value;
-    const amount = parseFloat(document.getElementById("acAmount").value) || 0;
+    const lots = parseInt(document.getElementById("acLots").value) || 0;
     const price = parseFloat(document.getElementById("acPrice").value) || 0;
     const fundamentals_ok = document.getElementById("acFundamental").checked;
     const err = document.getElementById("acError");
     const btn = document.getElementById("acRunBtn");
     if (!name) { err.textContent = "请选择股票"; err.style.display = "block"; return; }
-    if (amount <= 0) { err.textContent = "请输入补仓金额"; err.style.display = "block"; return; }
+    if (lots <= 0) { err.textContent = "补仓手数至少 1 手"; err.style.display = "block"; return; }
     err.style.display = "none";
     btn.disabled = true; btn.textContent = "算账中…";
     try {
         const res = await fetch("/api/add-check", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name, amount, price, fundamentals_ok })
+            body: JSON.stringify({ name, lots, price, fundamentals_ok })
         });
         const d = await res.json();
         if (!res.ok || !d.success) throw new Error(d.error || "算账失败");
@@ -2557,7 +2558,7 @@ function renderAddCheck(d) {
     const fmt = v => (v >= 0 ? "+" : "") + Math.round(v).toLocaleString();
     const html = `${verdict}
         <div class="ac-grid">
-            <div><span>本次买入</span><br><b>${d.qty} 股 · ${Math.round(d.amount).toLocaleString()} 元</b></div>
+            <div><span>本次买入</span><br><b>${d.lots} 手 · ${d.qty} 股 · ${Math.round(d.amount).toLocaleString()} 元</b></div>
             <div><span>补后持股</span><br><b>${d.qty_old} → ${d.qty_new} 股</b></div>
             <div><span>成本变化</span><br><b>${d.cost_old.toFixed(3)} → ${d.cost_new.toFixed(3)}</b>（${d.cost_change.toFixed(2)}）</div>
             <div><span>补后单票占比</span><br><b>${d.single_pct}%</b>（上限 20%）</div>
