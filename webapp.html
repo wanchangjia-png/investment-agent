@@ -68,6 +68,30 @@
                     </details>
                 </div>
 
+                <!-- ===== 对话（内嵌在今日 / 持仓页） ===== -->
+                <div class="chat-panel show" id="chatPanel">
+                    <div class="chat-header">
+                        <h2>💬 对话 Agent</h2>
+                        <div class="chat-actions">
+                            <span id="modelBadge" class="model-badge"></span>
+                            <button class="btn btn-sm btn-outline" onclick="clearChat()" title="清空对话">🗑️</button>
+                            <button class="btn btn-sm btn-outline" id="chatToggleBtn" onclick="toggleChatDock()" title="收起对话">▾</button>
+                        </div>
+                    </div>
+                    <div class="chat-messages" id="chatMessages">
+                    </div>
+                    <div class="chat-input-area">
+                        <div class="chat-input-row">
+                            <input type="text" id="chatInput" placeholder="问持仓、问行情，让 AI 分析…" onkeydown="if(event.key==='Enter') sendMessage()">
+                            <button class="send-btn" id="sendBtn" onclick="sendMessage()">发送</button>
+                        </div>
+                        <div class="chat-options">
+                            <label><input type="checkbox" id="searchToggle" checked> 联网搜索</label>
+                            <span id="chatStatus" style="color:#888;"></span>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="market-card" id="marketCard">
                     <div class="market-head">
                         <div class="left">
@@ -307,30 +331,6 @@
                     </tr></thead><tbody id="decisionBody"></tbody></table>
                 </div>
                 <div id="decisionsEmpty" class="empty-state" style="display:none;"><div class="icon">🗂</div><div>还没有决策记录</div></div>
-            </div>
-        </div>
-
-        <!-- ===== 对话（今日 / 持仓页内） ===== -->
-        <div class="chat-panel show" id="chatPanel">
-            <div class="chat-header">
-                <h2>💬 对话 Agent</h2>
-                <div class="chat-actions">
-                    <span id="modelBadge" class="model-badge"></span>
-                    <button class="btn btn-sm btn-outline" onclick="clearChat()" title="清空对话">🗑️</button>
-                    <button class="btn btn-sm btn-outline" id="chatToggleBtn" onclick="toggleChatDock()" title="收起对话">▾</button>
-                </div>
-            </div>
-            <div class="chat-messages" id="chatMessages">
-            </div>
-            <div class="chat-input-area">
-                <div class="chat-input-row">
-                    <input type="text" id="chatInput" placeholder="问持仓、问行情，让 AI 分析…" onkeydown="if(event.key==='Enter') sendMessage()">
-                    <button class="send-btn" id="sendBtn" onclick="sendMessage()">发送</button>
-                </div>
-                <div class="chat-options">
-                    <label><input type="checkbox" id="searchToggle" checked> 联网搜索</label>
-                    <span id="chatStatus" style="color:#888;"></span>
-                </div>
             </div>
         </div>
     </div>

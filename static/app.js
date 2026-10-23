@@ -355,10 +355,23 @@ function switchTab(name, btn) {
 }
 
 // ============ 对话框 ============
-// 对话只在「今日」「持仓」页出现，收进内容区底部
+// 对话只嵌在「今日」「持仓」内容里，不单独成块；切换时跟着搬过去
 function updateChatDock(name) {
     const panel = document.getElementById("chatPanel");
-    if (panel) panel.classList.toggle("show", name === "today" || name === "holdings");
+    if (!panel) return;
+    if (name === "holdings") {
+        const host = document.getElementById("tabHoldings");
+        if (host && panel.parentElement !== host) host.appendChild(panel);
+        panel.classList.add("show");
+    } else if (name === "today") {
+        const market = document.getElementById("marketCard");
+        if (market && panel.nextElementSibling !== market) {
+            market.parentNode.insertBefore(panel, market);
+        }
+        panel.classList.add("show");
+    } else {
+        panel.classList.remove("show");
+    }
 }
 
 function toggleChatDock() {
