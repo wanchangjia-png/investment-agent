@@ -1,3 +1,7 @@
+import datetime as dt
+
+import openpyxl
+
 import portfolio_agent as agent
 
 
@@ -29,3 +33,44 @@ def test_calculate_includes_realized(excel):
     expected = sum((h.get("市值") or 0) for h in holdings
                    if h["类别"] in ("股票", "现金", "黄金"))
     assert round(total_value, 2) == round(expected, 2)
+
+
+def _fixed_time(monkeypatch, hour, minute):
+    class FixedDatetime(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return dt.datetime(2099, 4, 2, hour, minute, tzinfo=tz)
+
+    monkeypatch.setattr(agent, "datetime", FixedDatetime)
+
+
+def test_intraday_snapshot_updates_same_row(excel, monkeypatch):
+    _fixed_time(monkeypatch, 10, 30)
+    before = len(agent.load_history())
+
+    assert agent.save_networth_snapshot(200000, -50000, {"A股主账户": 150000}) is True
+    assert len(agent.load_history()) == before + 1
+
+    assert agent.save_networth_snapshot(201000, -49000, {"A股主账户": 151000}) is True
+    history = agent.load_history()
+    assert len(history) == before + 1
+    assert history[-1]["总资产"] == 201000
+
+    wb = openpyxl.load_workbook(str(excel))
+    note = wb["净值历史"].cell(row=wb["净值历史"].max_row, column=8).value
+    assert note.startswith("盘中记录")
+
+
+def test_close_snapshot_finalizes_once(excel, monkeypatch):
+    _fixed_time(monkeypatch, 15, 10)
+    before = len(agent.load_history())
+
+    assert agent.save_networth_snapshot(200000, -50000, {"A股主账户": 150000}) is True
+    assert agent.save_networth_snapshot(201000, -49000, {"A股主账户": 151000}) is False
+    history = agent.load_history()
+    assert len(history) == before + 1
+    assert history[-1]["总资产"] == 200000
+
+    wb = openpyxl.load_workbook(str(excel))
+    note = wb["净值历史"].cell(row=wb["净值历史"].max_row, column=8).value
+    assert note == "收盘记录"

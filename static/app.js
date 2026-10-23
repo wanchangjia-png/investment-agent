@@ -2841,8 +2841,8 @@ async function toggleQuietDay() {
 }
 
 // ============ 初始化 ============
-// 先用已保存的数据渲染，行情只在点「刷新」时拉取
-loadData();
+// 先用已保存的数据渲染，再自动刷新一次行情并更新当天的净值行
+loadData().then(refreshData);
 loadToday();
 loadMarketView();
 loadQuietDays();

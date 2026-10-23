@@ -428,8 +428,8 @@ def load_yesterday_qty_map():
 
 
 def save_networth_snapshot(total, pnl, detail):
-    """保存净值快照到净值历史表（只在15:00收盘后记录，一天一次）
-    返回 True=已记录, False=跳过"""
+    """更新当天净值行：盘中每次刷新覆盖「盘中记录」，15:00 后固化为「收盘记录」
+    返回 True=已写入, False=跳过"""
     # 使用北京时间 (UTC+8)
     try:
         from datetime import timezone, timedelta
@@ -437,20 +437,24 @@ def save_networth_snapshot(total, pnl, detail):
         now = datetime.now(tz)
     except Exception:
         now = datetime.now(BEIJING_TZ)
-    market_closed = now.hour > 15 or (now.hour == 15 and now.minute >= 0)
-    if not market_closed:
-        print(f"ℹ️  当前 {now.strftime('%H:%M')}，A股未收盘（15:00），跳过净值记录")
-        return False
+    market_closed = now.hour >= 15
+    today = now.strftime("%Y-%m-%d")
+    label = "收盘记录" if market_closed else f"盘中记录 {now.strftime('%H:%M')}"
 
     wb = openpyxl.load_workbook(EXCEL_PATH)
     ws = wb["净值历史"]
-    last_row = ws.max_row + 1
-    today = now.strftime("%Y-%m-%d")
-    for row in ws.iter_rows(min_row=2, max_col=1, values_only=True):
-        if row[0] == today:
-            print(f"ℹ️  今日已记录，跳过")
-            wb.close()
-            return False
+    # 当天已有行就原地更新，没有就追加
+    target_row = None
+    for row in ws.iter_rows(min_row=2, max_col=8):
+        if row[0].value == today:
+            target_row = row[0].row
+            if market_closed and str(row[7].value or "").startswith("收盘记录"):
+                print("ℹ️  今日收盘记录已存在，跳过")
+                wb.close()
+                return False
+            break
+    if target_row is None:
+        target_row = ws.max_row + 1
 
     # 计算当日盈亏（与前一日总资产比较，扣除当日出入金）
     prev_total = 0
@@ -472,18 +476,19 @@ def save_networth_snapshot(total, pnl, detail):
         pass
     daily_pnl = round(total - prev_total - today_net_flow, 2) if prev_total > 0 else 0
 
-    ws.cell(row=last_row, column=1, value=today)
-    ws.cell(row=last_row, column=2, value=detail.get("A股主账户", 0))
-    ws.cell(row=last_row, column=3, value=detail.get("黄金", 0))
-    ws.cell(row=last_row, column=4, value=detail.get("账户二（短线）", 0))
-    ws.cell(row=last_row, column=5, value=total)
-    ws.cell(row=last_row, column=6, value=daily_pnl)
-    ws.cell(row=last_row, column=7, value=pnl)
-    ws.cell(row=last_row, column=8, value="收盘记录")
-    # 备份持仓作为"昨日持仓"，供次日计算今日盈亏
-    _backup_holdings_as_yesterday(wb)
+    ws.cell(row=target_row, column=1, value=today)
+    ws.cell(row=target_row, column=2, value=detail.get("A股主账户", 0))
+    ws.cell(row=target_row, column=3, value=detail.get("黄金", 0))
+    ws.cell(row=target_row, column=4, value=detail.get("账户二（短线）", 0))
+    ws.cell(row=target_row, column=5, value=total)
+    ws.cell(row=target_row, column=6, value=daily_pnl)
+    ws.cell(row=target_row, column=7, value=pnl)
+    ws.cell(row=target_row, column=8, value=label)
+    if market_closed:
+        # 收盘后才备份持仓作为"昨日持仓"，供次日计算今日盈亏
+        _backup_holdings_as_yesterday(wb)
     save_workbook(wb)
-    print(f"📝 已记录净值快照: {today}  总资产 {total:,.0f} 元")
+    print(f"📝 已更新净值快照: {today} {label}  总资产 {total:,.0f} 元")
     wb.close()
     return True
 
