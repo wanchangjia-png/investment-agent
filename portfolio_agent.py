@@ -15,6 +15,7 @@ import sys
 import os
 import json
 import shutil
+import threading
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -28,6 +29,24 @@ from settings import (BEIJING_TZ, DATA_DIR, EXCEL_PATH, BACKUP_DIR,
                       load_llm_config, LLM_ENDPOINTS)
 
 _last_backup_ts = 0.0
+
+# 只读场景复用同一个 Workbook，避免一次页面请求把整本 Excel 解析十几遍
+_wb_cache = {}
+_wb_cache_lock = threading.Lock()
+
+
+def _read_wb(data_only=False):
+    path = Path(EXCEL_PATH)
+    st = path.stat()
+    key = (str(path), bool(data_only))
+    with _wb_cache_lock:
+        hit = _wb_cache.get(key)
+        if hit and hit[0] == (st.st_mtime_ns, st.st_size):
+            return hit[1]
+    wb = openpyxl.load_workbook(str(path), data_only=data_only)
+    with _wb_cache_lock:
+        _wb_cache[key] = ((st.st_mtime_ns, st.st_size), wb)
+    return wb
 
 
 def cleanup_old_files(days=14):
@@ -134,7 +153,7 @@ SECTOR_OUTLOOK = {
 # ============ Excel 读写 ============
 def load_portfolio():
     """加载持仓表，返回持仓列表和合计信息"""
-    wb = openpyxl.load_workbook(EXCEL_PATH)
+    wb = _read_wb()
     ws = wb["持仓表"]
     holdings = []
     for row in ws.iter_rows(min_row=2, values_only=True):
@@ -303,7 +322,7 @@ def _log_edit(old_holdings, new_holdings, wb):
 def load_edit_log():
     """读取编辑记录"""
     try:
-        wb = openpyxl.load_workbook(EXCEL_PATH)
+        wb = _read_wb()
         if "编辑记录" not in wb.sheetnames:
             wb.close()
             return []
@@ -348,7 +367,7 @@ def save_memory(content):
 def load_memories():
     """加载所有记忆"""
     try:
-        wb = openpyxl.load_workbook(EXCEL_PATH)
+        wb = _read_wb()
         if "记忆" not in wb.sheetnames:
             wb.close()
             return []
@@ -412,7 +431,7 @@ def _backup_holdings_as_yesterday(wb):
 def load_yesterday_qty_map():
     """加载昨日持仓数量（名称 → 持股数），用于计算今日盈亏"""
     try:
-        wb = openpyxl.load_workbook(EXCEL_PATH)
+        wb = _read_wb()
         if "昨日持仓" not in wb.sheetnames:
             wb.close()
             return {}
@@ -495,7 +514,7 @@ def save_networth_snapshot(total, pnl, detail):
 
 def load_history():
     """加载净值历史"""
-    wb = openpyxl.load_workbook(EXCEL_PATH)
+    wb = _read_wb()
     ws = wb["净值历史"]
     records = []
     for row in ws.iter_rows(min_row=2, values_only=True):
@@ -617,7 +636,7 @@ def get_realized_pnl_total():
     if ledger or legacy:
         return round(ledger + legacy, 2)
     try:
-        wb = openpyxl.load_workbook(EXCEL_PATH)
+        wb = _read_wb()
         if "已实现盈亏" not in wb.sheetnames:
             wb.close()
             return 0
@@ -639,7 +658,7 @@ CASH_ACTION_TYPES = {"现金分红", "红利税", "利息", "现金调账"}
 def load_corporate_actions():
     """读取分红、红利税、利息等公司行为"""
     try:
-        wb = openpyxl.load_workbook(EXCEL_PATH, data_only=True)
+        wb = _read_wb(data_only=True)
         if CORPORATE_SHEET not in wb.sheetnames:
             wb.close()
             return []
@@ -711,7 +730,7 @@ def delete_corporate_action(row_num):
 def get_realized_pnl_records():
     """获取所有已实现盈亏记录"""
     try:
-        wb = openpyxl.load_workbook(EXCEL_PATH)
+        wb = _read_wb()
         if "已实现盈亏" not in wb.sheetnames:
             wb.close()
             return []
@@ -803,7 +822,7 @@ def delete_realized_pnl(row_num):
 def get_cleared_positions():
     """获取已清仓股票列表；有交易流水时以流水的真实成本为准"""
     try:
-        wb = openpyxl.load_workbook(EXCEL_PATH)
+        wb = _read_wb()
         ws = wb["持仓表"]
         cleared = []
         cleared_names = set()
@@ -920,7 +939,7 @@ def _fmt_tx_date(v):
 def load_transactions():
     if not EXCEL_PATH.exists():
         return []
-    wb = openpyxl.load_workbook(EXCEL_PATH, data_only=True)
+    wb = _read_wb(data_only=True)
     ws = _transaction_sheet(wb, create=False)
     if ws is None:
         wb.close()
@@ -1324,7 +1343,7 @@ def add_capital_flow(amount, flow_type, note=""):
 def load_capital_flows():
     """读取所有出入金记录，按时间倒序"""
     try:
-        wb = openpyxl.load_workbook(EXCEL_PATH)
+        wb = _read_wb()
         if "出入金" not in wb.sheetnames:
             wb.close()
             return []

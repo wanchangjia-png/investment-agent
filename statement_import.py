@@ -152,7 +152,7 @@ def opening_positions(trades, summary):
         elif t["type"] == "证券卖出":
             qty[code] = qty.get(code, 0) + t["qty"]
             names.setdefault(code, t["name"])
-        elif t["type"] == "新股入账":
+        elif t["type"] in SHARE_ADD_TYPES:
             qty[code] = qty.get(code, 0) - t["qty"]
             names.setdefault(code, t["name"])
     return {c: {"name": names.get(c, ""), "qty": q} for c, q in qty.items() if abs(q) > 1e-9}
@@ -169,7 +169,8 @@ APP_NAMES = {
     "159327": "半导体设备", "512480": "半导体ETF", "588000": "科创50",
     "605499": "东鹏饮料",
 }
-SEC_TYPES = {"证券买入", "证券卖出", "新股入账"}
+SEC_TYPES = {"证券买入", "证券卖出", "新股入账", "股份转入", "红股入账"}
+SHARE_ADD_TYPES = {"新股入账", "股份转入", "红股入账"}
 
 
 def _app_name(code, name):
@@ -226,8 +227,9 @@ def _merge_opening(reverse, ledger_state, summary_cost):
         if led and abs(led[0]) > 1e-9:
             out[code] = {"qty": led[0], "cost": led[1]}
         else:
+            # 窗口前已清仓的标的在对账单里没有成本，记 None 表示未知
             out[code] = {"qty": qty,
-                         "cost": summary_cost.get(code) or OPENING_COST.get(code, 0.0)}
+                         "cost": summary_cost.get(code) or OPENING_COST.get(code)}
     return out
 
 
@@ -243,10 +245,11 @@ def build_ledger(data, opening=None):
     for code, info in opening.items():
         q = info["qty"]
         c = info.get("cost")
-        if c is None:
-            c = OPENING_COST.get(code, 0.0)
         state[code] = [q, c]
         last_cost[code] = c
+
+    def _r(v):
+        return None if v is None else round(v, 3)
 
     trades = [t for t in data["trades"] if t["type"] in SEC_TYPES]
     trades.sort(key=lambda t: (t["date"], t["page"]))
@@ -254,7 +257,7 @@ def build_ledger(data, opening=None):
     for t in trades:
         code, name = t["code"], _app_name(t["code"], t["name"])
         qty, price = t["qty"], t["price"]
-        q, cost = state.get(code, [0.0, OPENING_COST.get(code, 0.0)])
+        q, cost = state.get(code, [0.0, None])
         if code not in state:
             state[code] = [q, cost]
             last_cost[code] = cost
@@ -274,30 +277,51 @@ def build_ledger(data, opening=None):
                     nc = round((gross + fee) / nq, 3)
             else:
                 nq = q + qty
-                nc = round((q * cost + gross + fee) / nq, 3) if nq else 0.0
-        elif t["type"] == "新股入账":
+                if cost is None and nq:
+                    # 窗口前持仓成本未知，混入后整段成本都无法还原
+                    nc = None if q > 0 else round((gross + fee) / nq, 3)
+                else:
+                    nc = round((q * cost + gross + fee) / nq, 3) if nq else 0.0
+        elif t["type"] in SHARE_ADD_TYPES:
             direction, realized = "买入", None
             gross = 0.0
-            note = "对账单导入｜新股入账（可转债按面值 100 元/张计成本）"
+            fee = 0.0
+            if t["type"] == "新股入账":
+                note = "对账单导入｜新股入账（可转债按面值 100 元/张计成本）"
+                added_cost = 1000.0
+            elif t["type"] == "股份转入":
+                note = "对账单导入｜股份转入（份额折算，0 成本）"
+                added_cost = 0.0
+            else:
+                note = "对账单导入｜红股入账（送股，0 成本）"
+                added_cost = 0.0
             nq = q + qty
-            nc = round((q * cost + 1000.0) / nq, 3) if nq else 0.0
+            if cost is None and q > 0:
+                nc = None
+            else:
+                nc = round((q * (cost or 0.0) + added_cost) / nq, 3) if nq else 0.0
         else:
             direction = "卖出"
             basis = last_cost.get(code, cost) if q <= 0 else cost
-            realized = round((price - basis) * qty - fee, 2)
             nq = q - qty
-            if q <= 0:
-                warnings.append(f"{t['date']} {name} 卖出 {qty:g} 股时结存不足，对账单疑似漏记买入")
-                note = "对账单导入（⚠️ 卖出前结存不足，疑似漏记买入）"
-                nc = basis
+            if basis is None:
+                realized = None
+                note = "对账单导入｜卖出（窗口前持仓，成本未知）"
+                nc = None if nq > 0 else 0.0
             else:
-                nc = cost if nq > 0 else 0.0
+                realized = round((price - basis) * qty - fee, 2)
+                if q <= 0:
+                    warnings.append(f"{t['date']} {name} 卖出 {qty:g} 股时结存不足，对账单疑似漏记买入")
+                    note = "对账单导入（⚠️ 卖出前结存不足，疑似漏记买入）"
+                    nc = basis
+                else:
+                    nc = basis if nq > 0 else 0.0
 
         last_cost[code] = cost if q > 0 else last_cost.get(code, cost)
         state[code] = [nq, nc]
         rows.append([
             t["date"], direction, "股票", name, code, qty, price, gross,
-            "A股主账户", note, fee, realized, round(cost, 3), round(nq, 4), round(nc, 3),
+            "A股主账户", note, fee, realized, _r(cost), _r(nq), _r(nc),
         ])
     return rows, warnings, state
 
