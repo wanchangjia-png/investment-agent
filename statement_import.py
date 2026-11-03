@@ -146,10 +146,10 @@ def opening_positions(trades, summary):
     names = {s["code"]: s["name"] for s in summary}
     for t in trades:
         code = t["code"]
-        if t["type"] == "证券买入":
+        if t["type"] in BUY_TYPES:
             qty[code] = qty.get(code, 0) - t["qty"]
             names.setdefault(code, t["name"])
-        elif t["type"] == "证券卖出":
+        elif t["type"] in SELL_TYPES:
             qty[code] = qty.get(code, 0) + t["qty"]
             names.setdefault(code, t["name"])
         elif t["type"] in SHARE_ADD_TYPES:
@@ -169,7 +169,9 @@ APP_NAMES = {
     "159327": "半导体设备", "512480": "半导体ETF", "588000": "科创50",
     "605499": "东鹏饮料",
 }
-SEC_TYPES = {"证券买入", "证券卖出", "新股入账", "股份转入", "红股入账"}
+BUY_TYPES = {"证券买入", "盘后定价买"}
+SELL_TYPES = {"证券卖出", "盘后定价卖"}
+SEC_TYPES = BUY_TYPES | SELL_TYPES | {"新股入账", "股份转入", "红股入账"}
 SHARE_ADD_TYPES = {"新股入账", "股份转入", "红股入账"}
 
 
@@ -265,7 +267,7 @@ def build_ledger(data, opening=None):
         fee = round(t["fee"] + t["stamp"] + t["transfer"], 2)
         note = "对账单导入"
 
-        if t["type"] == "证券买入":
+        if t["type"] in BUY_TYPES:
             direction, realized = "买入", None
             if q < 0:  # 回补此前的异常卖空
                 nq = q + qty
