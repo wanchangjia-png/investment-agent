@@ -24,6 +24,7 @@ import insights
 import monitor
 import settings
 import ai_usage
+import timeline
 
 HOST = settings.HOST
 PORT = settings.PORT
@@ -1593,6 +1594,13 @@ class PortfolioHandler(BaseHTTPRequestHandler):
                 "key_prefix": LLM_CONFIG["api_key"][:8] + "..." if LLM_CONFIG["api_key"] else "",
                 "fees": agent.load_trade_fee_config(),
             })
+
+        elif path == "/api/timeline":
+            try:
+                force = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("force", ["0"])[0] in ("1", "true")
+                self._send_json(timeline.build_timeline(force))
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
 
         elif path == "/api/calendar":
             try:

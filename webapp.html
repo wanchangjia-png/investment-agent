@@ -54,6 +54,7 @@
                 <button class="tab-btn" data-tab="cleared" onclick="switchTab('cleared',this)">📁 已清仓</button>
                 <button class="tab-btn" data-tab="transactions" onclick="switchTab('transactions',this)">🧾 交易复盘</button>
                 <button class="tab-btn" data-tab="history" onclick="switchTab('history',this)">📈 净值历史</button>
+                <button class="tab-btn" data-tab="timeline" onclick="switchTab('timeline',this)">🗓 时间线</button>
             </div>
 
             <div class="tab-content active" id="tabToday">
@@ -239,6 +240,29 @@
 
             <div class="tab-content" id="tabHistory"><div class="history-table" id="historyContainer"></div>
                 <div id="historyEmpty" class="empty-state" style="display:none;"><div class="icon">📈</div><div>暂无历史</div></div>
+            </div>
+
+            <div class="tab-content" id="tabTimeline">
+                <div class="timeline-head">
+                    <div>
+                        <h3>🗓 月度时间线</h3>
+                        <div class="timeline-sub">按月看你在炒什么、赚亏多少、错过的最强板块</div>
+                    </div>
+                    <button class="btn btn-sm btn-outline" onclick="loadTimeline(true)">🔄 重新计算</button>
+                </div>
+                <div id="timelineLoading" class="empty-state" style="display:none;"><div class="spinner"></div><div style="margin-top:10px;">正在按持仓还原历史，首次约需 10–20 秒…</div></div>
+                <div id="timelineBody" style="display:none;">
+                    <div class="year-chips" id="timelineYears"></div>
+                    <div id="timelineSummary"></div>
+                    <div class="panel timeline-chart-panel">
+                        <h4>我的持仓收益 vs 当月最强板块</h4>
+                        <div style="height:260px;"><canvas id="timelineChart"></canvas></div>
+                        <div class="timeline-chart-note" id="timelineChartNote"></div>
+                    </div>
+                    <div id="timelineWarnings" class="timeline-warnings"></div>
+                    <div class="timeline-months" id="timelineMonths"></div>
+                </div>
+                <div id="timelineEmpty" class="empty-state" style="display:none;"><div class="icon">🗓</div><div>暂无可用的时间线数据</div></div>
             </div>
 
             <div class="tab-content" id="tabTransactions">
