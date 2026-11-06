@@ -3002,53 +3002,40 @@ function renderTimelineChart(y) {
     const mine = months.map(m => m.return_pct === null || m.return_pct === undefined ? null : m.return_pct);
     const best = months.map(m => (m.opportunity && m.opportunity.best_return_pct !== undefined) ? m.opportunity.best_return_pct : null);
     const sectorNames = months.map(m => (m.opportunity && m.opportunity.best_sector) || "");
-    if (note) note.textContent = "柱状图为每月收益百分比：红/绿=我的股票持仓（红涨绿跌），橙色=当月最强行业 ETF，橙柱旁标注的就是那个板块。2026-07 起另有净值口径账户收益，见下方卡片。";
+    if (note) note.textContent = "橙柱为当月最强行业 ETF 的涨幅，具体是哪个板块见上方一览；2026-07 起另有净值口径账户收益，见下方卡片。";
 
-    // 在橙柱旁标出当月最强板块，解决“只看到涨多少、不知道是哪个板块”
-    const bestSectorMarker = {
-        id: "bestSectorMarker",
-        afterDatasetsDraw(chart) {
-            const meta = chart.getDatasetMeta(1);
-            const ctx = chart.ctx;
-            ctx.save();
-            ctx.font = "600 9px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
-            ctx.fillStyle = "#a86a12";
-            ctx.textAlign = "left";
-            ctx.textBaseline = "middle";
-            meta.data.forEach((bar, i) => {
-                const full = sectorNames[i];
-                const v = chart.data.datasets[1].data[i];
-                if (!full || v === null || v === undefined) return;
-                const short = full.split("/")[0];
-                ctx.save();
-                ctx.translate(bar.x, v >= 0 ? bar.y - 4 : bar.y + 4);
-                ctx.rotate(-Math.PI / 4);
-                ctx.fillText(short, 2, 0);
-                ctx.restore();
-            });
-            ctx.restore();
-        },
-    };
+    const strip = document.getElementById("timelineBestStrip");
+    if (strip) strip.innerHTML = months.map(m => {
+        const o = m.opportunity || {};
+        const has = o.best_sector && o.best_return_pct !== null && o.best_return_pct !== undefined;
+        const month = parseInt(m.month.slice(5), 10);
+        return `<button class="tl-best-chip" onclick="document.getElementById('tl-${m.month}')?.scrollIntoView({behavior:'smooth',block:'center'})">
+            <span class="m">${month}月</span>
+            <span class="s" title="${has ? escapeHtml(o.best_sector) : ""}">${has ? escapeHtml(o.best_sector) : "暂无"}</span>
+            <span class="p">${has ? tlPct(o.best_return_pct) : ""}</span>
+        </button>`;
+    }).join("");
 
     timelineChart = new Chart(canvas, {
         type: "bar",
-        plugins: [bestSectorMarker],
         data: {
             labels: months.map(m => `${parseInt(m.month.slice(5), 10)}月`),
             datasets: [
                 {
                     label: "我的持仓收益",
                     data: mine,
-                    backgroundColor: mine.map(v => v >= 0 ? "rgba(204,0,0,0.65)" : "rgba(0,153,0,0.65)"),
+                    backgroundColor: mine.map(v => v >= 0 ? "rgba(204,64,64,0.85)" : "rgba(58,157,111,0.85)"),
                     borderRadius: 4,
+                    maxBarThickness: 18,
                 },
                 {
                     label: "最强板块 ETF",
                     data: best,
-                    backgroundColor: "rgba(232,163,61,0.55)",
-                    borderColor: "rgba(232,163,61,0.95)",
+                    backgroundColor: "rgba(230,179,90,0.6)",
+                    borderColor: "rgba(224,164,60,1)",
                     borderWidth: 1,
                     borderRadius: 4,
+                    maxBarThickness: 18,
                 },
             ],
         },
@@ -3056,11 +3043,13 @@ function renderTimelineChart(y) {
             responsive: true,
             maintainAspectRatio: false,
             animation: { duration: 0 },
-            layout: { padding: { top: 24, right: 48 } },
             interaction: { mode: "index", intersect: false },
             plugins: {
-                legend: { position: "bottom", labels: { boxWidth: 10, font: { size: 11 } } },
+                legend: { display: false },
                 tooltip: {
+                    backgroundColor: "rgba(40,40,40,0.92)",
+                    padding: 10,
+                    cornerRadius: 8,
                     callbacks: {
                         label: ctx => {
                             const v = ctx.parsed.y;
@@ -3074,10 +3063,12 @@ function renderTimelineChart(y) {
                 },
             },
             scales: {
-                x: { grid: { display: false }, ticks: { font: { size: 11 } } },
+                x: { grid: { display: false }, ticks: { font: { size: 11 }, color: "#888" } },
                 y: {
-                    ticks: { font: { size: 10 }, callback: v => v + "%" },
-                    grid: { color: "#f0f0f0" },
+                    beginAtZero: true,
+                    ticks: { font: { size: 10 }, color: "#999", callback: v => v + "%" },
+                    grid: { color: "#f2f3f5" },
+                    border: { display: false },
                 },
             },
         },
@@ -3094,18 +3085,24 @@ function renderTimelineCard(m) {
                 <span class="tl-pnl" style="color:${tlColor(x.pnl)}">${tlMoney(x.pnl)}</span>
             </div>`).join("") : '<div class="tl-muted">本月无</div>'}</div>`;
     const bestHtml = opp ? `
-        <div class="tl-best">
-            <span class="tl-best-tag">🏆 当月最强板块</span>
-            <b>${escapeHtml(opp.best_sector)}</b>
-            <span style="color:${tlColor(opp.best_return_pct)}">${tlPct(opp.best_return_pct)}</span>
-            <span class="tl-muted">${escapeHtml(opp.best_etf)}</span>
-        </div>` : `<div class="tl-best tl-muted">本月暂无行业 ETF 基准数据</div>`;
-    const oppHtml = opp ? `
+        <div class="tl-line tl-line-best">
+            <span class="tl-line-k">🏆 当月最强</span>
+            <b class="tl-line-name">${escapeHtml(opp.best_sector)}</b>
+            <span class="tl-line-pct" style="color:${tlColor(opp.best_return_pct)}">${tlPct(opp.best_return_pct)}</span>
+            <span class="tl-muted tl-line-extra">${escapeHtml(opp.best_etf)}</span>
+        </div>` : `<div class="tl-line tl-muted">本月暂无行业 ETF 基准数据</div>`;
+    const mainHtml = main ? `
+        <div class="tl-line">
+            <span class="tl-line-k">${main.turnover > 0 ? "💼 主炒板块" : "💼 持仓最大"}</span>
+            <b class="tl-line-name main">${escapeHtml(main.sector)}</b>
+            <span class="tl-muted">${main.turnover > 0 ? `成交 ¥${Math.round(main.turnover).toLocaleString()}` : "本月无交易"}</span>
+        </div>` : `<div class="tl-line tl-muted">本月无股票交易</div>`;
+    const oppHtml = (opp && opp.gap_pct !== null && opp.gap_pct !== undefined) ? `
         <div class="tl-opp">
-            <span class="tl-opp-title">💡 当月机会成本</span>
-            ${opp.gap_pct !== null && opp.gap_pct !== undefined ? `你${opp.gap_pct >= 0 ? "落后" : "跑赢"}最强板块 <b style="color:${opp.gap_pct >= 0 ? "#CC0000" : "#009900"}">${Math.abs(opp.gap_pct).toFixed(2)} 个百分点</b>` : ""}
-            ${opp.cost_rmb !== null && opp.cost_rmb !== undefined ? `，${opp.cost_rmb >= 0 ? `全仓最强板块约多赚 <b>¥${Math.abs(Math.round(opp.cost_rmb)).toLocaleString()}</b>` : `若全仓最强板块约少赚 <b>¥${Math.abs(Math.round(opp.cost_rmb)).toLocaleString()}</b>`}` : ""}
-            <span class="tl-muted">（覆盖 ${opp.coverage} 个行业基准）</span>
+            💡 机会成本：${opp.gap_pct >= 0 ? "落后" : "跑赢"}最强板块
+            <b style="color:${opp.gap_pct >= 0 ? "#CC4040" : "#3A9D6F"}">${Math.abs(opp.gap_pct).toFixed(2)} 个百分点</b>
+            ${opp.cost_rmb !== null && opp.cost_rmb !== undefined ? `，${opp.cost_rmb >= 0 ? "全仓约多赚" : "若全仓约少赚"} <b>¥${Math.abs(Math.round(opp.cost_rmb)).toLocaleString()}</b>` : ""}
+            <span class="tl-muted">（${opp.coverage} 个行业基准）</span>
         </div>` : "";
     const sectorRows = (m.sectors || []).filter(s => s.turnover > 0 || s.value > 0).slice(0, 6).map(s => `
         <div class="tl-row">
@@ -3115,7 +3112,7 @@ function renderTimelineCard(m) {
         </div>`).join("");
 
     return `
-    <div class="timeline-card ${m.partial ? "partial" : ""}">
+    <div class="timeline-card ${m.partial ? "partial" : ""}" id="tl-${m.month}">
         <div class="tl-card-head">
             <div class="tl-month">${escapeHtml(m.label)} ${m.partial ? '<span class="badge">进行中</span>' : ""}</div>
             <div class="tl-pnl-big" style="color:${tlColor(m.pnl)}">${tlMoney(m.pnl)}<span class="tl-unit">元</span></div>
@@ -3126,8 +3123,8 @@ function renderTimelineCard(m) {
             <span>日均持仓 ¥${Math.round(m.avg_stock_value || 0).toLocaleString()}</span>
             <span>成交 ¥${Math.round(m.turnover || 0).toLocaleString()}</span>
         </div>
-        ${main ? `<div class="tl-main">${main.turnover > 0 ? "主炒板块" : "持仓最大板块"}：<b>${escapeHtml(main.sector)}</b> ${main.turnover > 0 ? `<span class="tl-muted">成交 ¥${Math.round(main.turnover).toLocaleString()}</span>` : '<span class="tl-muted">本月无交易</span>'}</div>` : `<div class="tl-main tl-muted">本月无股票交易</div>`}
         ${bestHtml}
+        ${mainHtml}
         ${oppHtml}
         <div class="tl-cols">
             ${cols("赚得最多", m.contributors)}

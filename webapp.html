@@ -255,8 +255,16 @@
                     <div class="year-chips" id="timelineYears"></div>
                     <div id="timelineSummary"></div>
                     <div class="panel timeline-chart-panel">
-                        <h4>我的持仓收益 vs 当月最强板块</h4>
-                        <div style="height:260px;"><canvas id="timelineChart"></canvas></div>
+                        <div class="tl-chart-head">
+                            <h4>我的持仓收益 vs 当月最强板块</h4>
+                            <div class="tl-chart-legend">
+                                <span class="tl-legend-dot mine"></span>我的持仓
+                                <span class="tl-legend-dot best"></span>最强板块 ETF
+                            </div>
+                        </div>
+                        <div class="tl-chart-wrap"><canvas id="timelineChart"></canvas></div>
+                        <div class="tl-best-strip-title">每月最强板块</div>
+                        <div class="tl-best-strip" id="timelineBestStrip"></div>
                         <div class="timeline-chart-note" id="timelineChartNote"></div>
                     </div>
                     <div id="timelineWarnings" class="timeline-warnings"></div>
